@@ -1,0 +1,3 @@
+statusline.conf
+*.bak-*
+.DS_Store
