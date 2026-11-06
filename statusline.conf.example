@@ -1,10 +1,10 @@
-# Ajustes locais da status line. Copie para ~/.claude/statusline.conf e edite.
-# Este arquivo é lido no início do statusline.sh; nada aqui vai para o repositório.
+# Local settings for the status line. Copy to ~/.claude/statusline.conf and edit.
+# This file is read at the start of statusline.sh; nothing here goes into the repository.
 
-# Cor do perfil GCP ativo (☁), por prefixo do nome do perfil.
-# Cores: orange ice blue green mauve pink teal peach sky yellow red
+# Color of the active GCP profile (☁), by profile name prefix.
+# Colors: orange ice blue green mauve pink teal peach sky yellow red
 PROFILE_COLORS="acme=orange outracorp=ice"
 
-# Prefixo a remover do nome do contexto kubectl (⎈), quando ele repete a empresa.
-# Ex.: contexto "acme-ctx-core-prod" aparece como "core-prod".
+# Prefix to strip from the kubectl context name (⎈), when it repeats the company.
+# E.g.: context "acme-ctx-core-prod" is shown as "core-prod".
 KCTX_STRIP_PREFIX="acme-ctx-"

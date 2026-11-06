@@ -1,11 +1,11 @@
 #!/bin/sh
-# Instalador da status line do Claude Code.
+# Installer for the Claude Code status line.
 #
 #   curl -fsSL https://raw.githubusercontent.com/danielfnfaria/claudecode-statusbar/main/install.sh | sh
 #
-# Desinstalar:  ... | sh -s -- --uninstall
-# Variáveis:    CLAUDE_CONFIG_DIR (padrão ~/.claude), STATUSBAR_REF (branch/tag),
-#               STATUSBAR_SRC (instala de um diretório local, em vez de baixar).
+# Uninstall:    ... | sh -s -- --uninstall
+# Variables:    CLAUDE_CONFIG_DIR (default ~/.claude), STATUSBAR_REF (branch/tag),
+#               STATUSBAR_SRC (install from a local directory instead of downloading).
 set -eu
 
 REPO="${STATUSBAR_REPO:-danielfnfaria/claudecode-statusbar}"
@@ -21,82 +21,82 @@ for arg in ${@+"$@"}; do
   case "$arg" in
     --uninstall) ACTION=uninstall ;;
     --help|-h)   sed -n '2,10p' "$0" 2>/dev/null || true; exit 0 ;;
-    *)           printf 'opção desconhecida: %s\n' "$arg" >&2; exit 2 ;;
+    *)           printf 'unknown option: %s\n' "$arg" >&2; exit 2 ;;
   esac
 done
 
 say()  { printf '%s\n' "$*"; }
 ok()   { printf '  \033[32m✓\033[0m %s\n' "$*"; }
 warn() { printf '  \033[33m!\033[0m %s\n' "$*"; }
-die()  { printf '\033[31merro:\033[0m %s\n' "$*" >&2; exit 1; }
+die()  { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
-command -v jq >/dev/null 2>&1 || die "jq não encontrado (brew install jq / apt install jq)"
+command -v jq >/dev/null 2>&1 || die "jq not found (brew install jq / apt install jq)"
 [ -d "$DIR" ] || mkdir -p "$DIR"
 [ -f "$SET" ] || printf '{}\n' > "$SET"
 
-# ---------------------------------------------------------------- desinstalação
+# ---------------------------------------------------------------- uninstall
 if [ "$ACTION" = uninstall ]; then
-  say "Desinstalando de $DIR"
-  cp "$SET" "$SET.bak-$STAMP" && ok "settings.json salvo em settings.json.bak-$STAMP"
+  say "Uninstalling from $DIR"
+  cp "$SET" "$SET.bak-$STAMP" && ok "settings.json saved to settings.json.bak-$STAMP"
   tmp="$(mktemp)"
   jq 'del(.statusLine)' "$SET" > "$tmp" && mv "$tmp" "$SET"
-  ok "statusLine removido do settings.json"
+  ok "statusLine removed from settings.json"
   for f in $FILES; do
-    [ -f "$DIR/$f" ] && mv "$DIR/$f" "$DIR/$f.removido-$STAMP" && ok "$f movido para $f.removido-$STAMP"
+    [ -f "$DIR/$f" ] && mv "$DIR/$f" "$DIR/$f.removed-$STAMP" && ok "$f moved to $f.removed-$STAMP"
   done
-  rm -rf "$DIR/cache/agent-map" && ok "cache do agent map apagado"
+  rm -rf "$DIR/cache/agent-map" && ok "agent map cache deleted"
   say ""
-  say "Pronto. O statusline.conf foi mantido, por ser seu."
+  say "Done. statusline.conf was kept, since it is yours."
   exit 0
 fi
 
-# ---------------------------------------------------------------- dependências
-say "Status line do Claude Code -> $DIR"
+# ---------------------------------------------------------------- dependencies
+say "Claude Code status line -> $DIR"
 say ""
-say "Dependências:"
-command -v bash >/dev/null 2>&1 || die "bash não encontrado"
+say "Dependencies:"
+command -v bash >/dev/null 2>&1 || die "bash not found"
 ok "bash"
 ok "jq"
 if command -v python3 >/dev/null 2>&1; then
   ok "python3"
   if python3 -c 'import PIL' >/dev/null 2>&1; then
-    ok "Pillow (agent map em imagem)"
+    ok "Pillow (image agent map)"
   else
-    warn "Pillow ausente: o agent map cai no desenho em texto"
-    warn "para ativar a imagem: python3 -m pip install --user Pillow"
+    warn "Pillow missing: the agent map falls back to the text drawing"
+    warn "to enable the image: python3 -m pip install --user Pillow"
   fi
 else
-  warn "python3 ausente: o agent map fica desativado (o resto da status line funciona)"
+  warn "python3 missing: the agent map is disabled (the rest of the status line works)"
 fi
-command -v git >/dev/null 2>&1 || warn "git ausente: a linha de branch/PR fica vazia"
-command -v gh  >/dev/null 2>&1 || warn "gh ausente: o estado das PRs não aparece"
+command -v git >/dev/null 2>&1 || warn "git missing: the branch/PR line stays empty"
+command -v gh  >/dev/null 2>&1 || warn "gh missing: PR status is not shown"
 
-# ---------------------------------------------------------------- arquivos
+# ---------------------------------------------------------------- files
 say ""
-say "Arquivos:"
+say "Files:"
 tmpd="$(mktemp -d)"
 trap 'rm -rf "$tmpd"' EXIT INT TERM
 for f in $FILES; do
   if [ -n "${STATUSBAR_SRC:-}" ]; then
-    cp "$STATUSBAR_SRC/$f" "$tmpd/$f" || die "não achei $STATUSBAR_SRC/$f"
+    cp "$STATUSBAR_SRC/$f" "$tmpd/$f" || die "could not find $STATUSBAR_SRC/$f"
   else
-    curl -fsSL "$RAW/$f" -o "$tmpd/$f" || die "falha ao baixar $f de $RAW"
+    curl -fsSL "$RAW/$f" -o "$tmpd/$f" || die "failed to download $f from $RAW"
   fi
-  [ -s "$tmpd/$f" ] || die "$f veio vazio"
+  [ -s "$tmpd/$f" ] || die "$f came back empty"
 done
-bash -n "$tmpd/statusline.sh" || die "statusline.sh não passou na checagem de sintaxe"
+bash -n "$tmpd/statusline.sh" || die "statusline.sh failed the syntax check"
 if command -v python3 >/dev/null 2>&1; then
   python3 -c "import ast,sys; ast.parse(open(sys.argv[1]).read())" "$tmpd/agent-map.py" \
-    || die "agent-map.py não passou na checagem de sintaxe"
+    || die "agent-map.py failed the syntax check"
 fi
 for f in $FILES; do
   if [ -f "$DIR/$f" ] && ! cmp -s "$tmpd/$f" "$DIR/$f"; then
     cp "$DIR/$f" "$DIR/$f.bak-$STAMP"
-    ok "$f: versão anterior salva em $f.bak-$STAMP"
+    ok "$f: previous version saved to $f.bak-$STAMP"
   fi
   cp "$tmpd/$f" "$DIR/$f"
   chmod +x "$DIR/$f"
-  ok "$f instalado"
+  ok "$f installed"
 done
 
 # ---------------------------------------------------------------- settings.json
@@ -112,24 +112,24 @@ jq --arg cmd "$CMD" '
   | .statusLine.command = (if ((.statusLine.command // "") | test("statusline\\.sh"))
                            then .statusLine.command else $cmd end)
   | .statusLine.refreshInterval = (.statusLine.refreshInterval // 5)
-' "$SET" > "$tmp" || die "não consegui editar o settings.json (JSON inválido?)"
+' "$SET" > "$tmp" || die "could not edit settings.json (invalid JSON?)"
 mv "$tmp" "$SET"
 depois="$(jq -r '.statusLine.command' "$SET")"
 if [ "$antes" = "$depois" ] && [ -n "$antes" ]; then
-  ok "comando mantido (já apontava para o statusline.sh)"
+  ok "command kept (already pointed to statusline.sh)"
 else
-  ok "statusLine configurado"
+  ok "statusLine configured"
 fi
-ok "cópia anterior em settings.json.bak-$STAMP"
+ok "previous copy in settings.json.bak-$STAMP"
 
-# ---------------------------------------------------------------- fim
+# ---------------------------------------------------------------- end
 say ""
-say "Pronto. Abra uma sessão nova do Claude Code para ver."
+say "Done. Open a new Claude Code session to see it."
 say ""
-say "  Ajustes locais (cores por perfil, prefixo do contexto k8s):"
-say "    $DIR/statusline.conf  — modelo em statusline.conf.example"
+say "  Local settings (colors per profile, k8s context prefix):"
+say "    $DIR/statusline.conf  — template in statusline.conf.example"
 say "  Agent map:"
-say "    aparece sozinho enquanto houver sub-agente ativo na sessão"
+say "    shows up on its own while a sub-agent is active in the session"
 say "    AGENT_MAP_BG=rrggbb  AGENT_MAP_ROWS=4  AGENT_MAP_MAX_AGE=60"
-say "  Desinstalar:"
+say "  Uninstall:"
 say "    curl -fsSL $RAW/install.sh | sh -s -- --uninstall"

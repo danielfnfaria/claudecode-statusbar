@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
-# Status line do Claude Code, numa moldura de duas linhas:
-# Com nome de sessão (/rename, --name ou o título automático), ele vira o rótulo da moldura:
-#   ╭─ <nome da sessão> ──────
-#   │  trabalho … / ╰─ sessão …
-#   ╭─ trabalho: ☁ <empresa> · @<agente> (ativos ou principal) ⟳n (em segundo plano) · ⎈ <cluster> · ⎇ <branch> ⇡a ⇣b +ins/-rem ⚑n · PR #n <ci> (link)
-#   ╰─ sessão:   [✦ <modelo>] ●●○○○ <effort> 🧠 ⚡ · Ctx <barra> · $ <barra> · 5h <barra> ↻hh:mm · 7d <barra>
-#                · ❄ <cache> · ⏱ <duração>
-# Abaixo, quando houver: uma linha por PR criada nesta sessão (com o CI).
-# Recebe o JSON da sessão no stdin; tudo aqui precisa ser rápido (o CI do PR vem de um cache).
-# Responsivo: lê a largura do terminal do Claude Code e corta itens, do menos ao mais importante,
-# até cada linha caber (STATUSLINE_COLS força uma largura, útil para testar).
+# Claude Code status line, in a two-line frame:
+# With a session name (/rename, --name or the automatic title), it becomes the frame label:
+#   ╭─ <session name> ──────
+#   │  work … / ╰─ session …
+#   ╭─ work:    ☁ <company> · @<agent> (active ones or main) ⟳n (in background) · ⎈ <cluster> · ⎇ <branch> ⇡a ⇣b +ins/-rem ⚑n · PR #n <ci> (link)
+#   ╰─ session: [✦ <model>] ●●○○○ <effort> 🧠 ⚡ · Ctx <bar> · $ <bar> · 5h <bar> ↻hh:mm · 7d <bar>
+#                · ❄ <cache> · ⏱ <duration>
+# Below, when present: one line per PR created in this session (with CI).
+# Receives the session JSON on stdin; everything here must be fast (the PR CI comes from a cache).
+# Responsive: reads the Claude Code terminal width and drops items, least to most important,
+# until each line fits (STATUSLINE_COLS forces a width, useful for testing).
 input=$(cat)
 
-# Ajustes locais (cores por perfil, prefixo do contexto k8s, orçamento). Nunca versionado:
-#   PROFILE_COLORS="acme=orange outra=ice"   KCTX_STRIP_PREFIX="acme-ctx-"
+# Local settings (colors per profile, k8s context prefix, budget). Never versioned:
+#   PROFILE_COLORS="acme=orange other=ice"   KCTX_STRIP_PREFIX="acme-ctx-"
 CONFDIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 [ -r "$CONFDIR/statusline.conf" ] && . "$CONFDIR/statusline.conf"
 
@@ -24,12 +24,12 @@ DIM=$(fg 108 112 134); SEPC=$(fg 88 91 112)
 PINK=$(fg 245 194 231); MAUVE=$(fg 203 166 247); BLUE=$(fg 137 180 250); SKY=$(fg 137 220 235)
 TEAL=$(fg 148 226 213); GREEN=$(fg 166 227 161); YELLOW=$(fg 249 226 175); PEACH=$(fg 250 179 135)
 RED=$(fg 243 139 168); LAV=$(fg 180 190 254)
-ORANGE=$(fg 255 128 0)   # laranja
-ICE=$(fg 173 216 255)    # azul bem claro
+ORANGE=$(fg 255 128 0)   # orange
+ICE=$(fg 173 216 255)    # very light blue
 SEP=" ${SEPC}·${R} "
 
-# Separador \x1f, não tab: tab é espaço em branco para o read, que juntaria campos vazios
-# seguidos (ex. used_percentage nulo no início da sessão) e deslocaria todos os seguintes.
+# Separator \x1f, not tab: tab is whitespace to read, which would merge consecutive empty
+# fields (e.g. null used_percentage at session start) and shift all the following ones.
 IFS=$'\x1f' read -r model dir ctx size ctx_pct tok_in tok_out cost dur_ms pr_num pr_url \
   effort thinking fast rl5_pct rl5_reset rl7_pct cache_hit cache_warm transcript session_id main_agent session_name < <(jq -r '
   (.context_window.current_usage // {}) as $u
@@ -59,9 +59,9 @@ IFS=$'\x1f' read -r model dir ctx size ctx_pct tok_in tok_out cost dur_ms pr_num
       (.session_name // "") ] | map(tostring) | join("\u001f")' <<<"$input")
 
 fmt_k() { awk -v n="$1" 'BEGIN { if (n >= 1e6) printf "%.1fM", n/1e6; else if (n >= 1000) printf "%dk", n/1000; else printf "%d", n }'; }
-link() { printf '\e]8;;%s\e\\%s\e]8;;\e\\' "$1" "$2"; }   # OSC 8: texto clicável
+link() { printf '\e]8;;%s\e\\%s\e]8;;\e\\' "$1" "$2"; }   # OSC 8: clickable text
 
-# bar <pct> [largura] -> células com gradiente verde→amarelo→vermelho; vazias em cinza
+# bar <pct> [width] -> cells with a green→yellow→red gradient; empty ones in gray
 bar() {
   local p=$1 w=${2:-10} f i r g b t out=""
   [ "$p" -gt 100 ] && p=100; [ "$p" -lt 0 ] && p=0
@@ -80,8 +80,8 @@ bar() {
 }
 pct_color() { if [ "$1" -ge 80 ]; then printf '%s' "$RED"; elif [ "$1" -ge 50 ]; then printf '%s' "$YELLOW"; else printf '%s' "$GREEN"; fi; }
 
-# ===== largura do terminal ==================================================================
-# A status line roda sem tty: sobe pelos processos pais até achar o terminal do Claude Code.
+# ===== terminal width =======================================================================
+# The status line runs without a tty: walks up the parent processes until it finds the Claude Code terminal.
 term_cols() {
   local p=$PPID t i
   for i in 1 2 3 4 5; do
@@ -96,40 +96,40 @@ term_cols() {
 }
 cols=${STATUSLINE_COLS:-$(term_cols)}
 [ "${cols:-0}" -gt 0 ] || cols=${COLUMNS:-0}
-[ "$cols" -gt 0 ] || cols=200   # sem terminal descoberto: não corta nada
-max=$(( cols - 6 ))   # moldura + respiro que o Claude Code deixa nas bordas
+[ "$cols" -gt 0 ] || cols=200   # no terminal found: cut nothing
+max=$(( cols - 6 ))   # frame + padding Claude Code leaves at the edges
 
-# largura visível: sem cores nem links; emojis ocupam 2 colunas
+# visible width: no colors or links; emojis take 2 columns
 vis() {
   perl -CSD -0777 -ne 's/\e\[[0-9;]*m//g; s/\e\]8;;[^\e]*\e\\//g; $n = length($_);
     $n++ while /[\x{1F300}-\x{1FAFF}\x{23F3}\x{26A1}]/g; print $n' <<<"$1"
 }
 
-# ===== dados da linha 1: trabalho =============================================================
+# ===== line 1 data: work ======================================================================
 
-# --- empresa (perfil gcloud) ---------------------------------------------------------------
+# --- company (gcloud profile) --------------------------------------------------------------
 gprofile="${CLOUDSDK_ACTIVE_CONFIG_NAME:-$(cat "$HOME/.config/gcloud/active_config" 2>/dev/null)}"
-# PROFILE_COLORS mapeia "prefixo=cor" (orange, ice, blue, green, mauve, pink, teal, peach…)
-emp_c=$DIM
-for par in ${PROFILE_COLORS:-}; do
+# PROFILE_COLORS maps "prefix=color" (orange, ice, blue, green, mauve, pink, teal, peach…)
+prof_c=$DIM
+for pair in ${PROFILE_COLORS:-}; do
   case "$gprofile" in
-    "${par%%=*}"*) case "${par#*=}" in
-                     orange) emp_c=$ORANGE ;; ice) emp_c=$ICE ;; blue) emp_c=$BLUE ;;
-                     green)  emp_c=$GREEN  ;; mauve) emp_c=$MAUVE ;; pink) emp_c=$PINK ;;
-                     teal)   emp_c=$TEAL   ;; peach) emp_c=$PEACH ;; sky) emp_c=$SKY ;;
-                     yellow) emp_c=$YELLOW ;; red) emp_c=$RED ;; *) emp_c=$DIM ;;
+    "${pair%%=*}"*) case "${pair#*=}" in
+                     orange) prof_c=$ORANGE ;; ice) prof_c=$ICE ;; blue) prof_c=$BLUE ;;
+                     green)  prof_c=$GREEN  ;; mauve) prof_c=$MAUVE ;; pink) prof_c=$PINK ;;
+                     teal)   prof_c=$TEAL   ;; peach) prof_c=$PEACH ;; sky) prof_c=$SKY ;;
+                     yellow) prof_c=$YELLOW ;; red) prof_c=$RED ;; *) prof_c=$DIM ;;
                    esac
                    break ;;
   esac
 done
 
-# --- cluster (kubectl; ⎈ = símbolo do Kubernetes/Helm, o mesmo do kube-ps1) ----------------
+# --- cluster (kubectl; ⎈ = Kubernetes/Helm symbol, same as kube-ps1) -----------------------
 kubeconfig="${KUBECONFIG%%:*}"; kubeconfig="${kubeconfig:-$HOME/.kube/config}"
 kctx=$(awk '/^current-context:/ { print $2; exit }' "$kubeconfig" 2>/dev/null | tr -d '"')
-kctx="${kctx##*_}"             # gke_<projeto>_<região>_<cluster> -> <cluster>
+kctx="${kctx##*_}"             # gke_<project>_<region>_<cluster> -> <cluster>
 [ -n "${KCTX_STRIP_PREFIX:-}" ] && kctx="${kctx#$KCTX_STRIP_PREFIX}"
 
-# --- git: branch, sync com o remoto, mudanças locais, stash ----------------------------------
+# --- git: branch, sync with remote, local changes, stash -------------------------------------
 git_() { git -C "$dir" --no-optional-locks "$@" 2>/dev/null; }
 branch=$(git_ branch --show-current)
 [ -z "$branch" ] && branch=$(git_ rev-parse --short HEAD)
@@ -138,13 +138,13 @@ if [ -n "$branch" ]; then
   read -r ins del < <(git_ diff HEAD --numstat | awk '{ a += $1; d += $2 } END { printf "%d %d", a, d }')
   stashes=$(git_ stash list | wc -l | tr -d ' ')
 
-  # --- PR: número e link vêm do Claude Code; o CI via gh, em cache de 2 min em segundo plano ---
+  # --- PR: number and link come from Claude Code; CI via gh, cached for 2 min in the background ---
   root=$(git_ rev-parse --show-toplevel)
   cache="${TMPDIR:-/tmp}/claude-statusline-pr-$(printf '%s' "$root:$branch" | shasum | cut -c1-16)"
   if [ ! -f "$cache" ] || [ -n "$(find "$cache" -mmin +2 2>/dev/null)" ]; then
     touch "$cache"
-    # "ok" só com o PR liberado para merge (mergeStateStatus): um check obrigatório que ainda não
-    # reportou (ex. o Cloud Build atrasado) não aparece no rollup, e só com ele daria ✓ cedo demais
+    # "ok" only when the PR is cleared to merge (mergeStateStatus): a required check that has not
+    # reported yet (e.g. a delayed Cloud Build) does not show in the rollup, and using it alone would give ✓ too early
     ( cd "$root" && gh pr view "$branch" --json number,state,url,mergeStateStatus,statusCheckRollup --jq '
         [.statusCheckRollup[]? | (.conclusion // .state // "")] as $c
         | "\(.number) \(.state) \(
@@ -156,7 +156,7 @@ if [ -n "$branch" ]; then
   read -r c_num pr_state pr_ci c_url < "$cache" 2>/dev/null
   pr_num="${pr_num:-$c_num}"; pr_url="${pr_url:-$c_url}"
   if [ -n "$pr_num" ]; then
-    [ "$c_num" = "$pr_num" ] || { pr_state=""; pr_ci=""; }   # cache de outra branch/PR
+    [ "$c_num" = "$pr_num" ] || { pr_state=""; pr_ci=""; }   # cache from another branch/PR
     case "$pr_state" in
       MERGED) pr_c=$MAUVE; pr_txt="PR #${pr_num} merged" ;;
       CLOSED) pr_c=$DIM;   pr_txt="PR #${pr_num} closed" ;;
@@ -170,12 +170,12 @@ if [ -n "$branch" ]; then
   fi
 fi
 
-# --- agentes trabalhando: sub-agentes desta sessão com transcript escrito no último minuto ------
-# (<projeto>/<sessão>/subagents/agent-<id>.jsonl + .meta.json com o agentType)
+# --- working agents: this session's sub-agents with a transcript written in the last minute -----
+# (<project>/<session>/subagents/agent-<id>.jsonl + .meta.json with the agentType)
 agents_txt=""; bg=0; agent_lines=()
 subdir="${transcript%/*}/${session_id}/subagents"
 if [ -n "$session_id" ] && [ -d "$subdir" ]; then
-  # cada ativo vira "<tipo> <forma>"; forma = background quando foi disparado em segundo plano
+  # each active one becomes "<type> <shape>"; shape = background when it was launched in the background
   active=$(find "$subdir" -name 'agent-*.jsonl' -mtime -60s 2>/dev/null | while read -r f; do
              jq -r '"\(.agentType // "") \(.requestShape // "")"' "${f%.jsonl}.meta.json" 2>/dev/null
            done)
@@ -186,12 +186,12 @@ if [ -n "$session_id" ] && [ -d "$subdir" ]; then
   done < <(awk 'NF { print $1 }' <<<"$active" | sort | uniq -c)
   bg=$(awk '$2 == "background"' <<<"$active" | grep -c .)
 
-  # uma linha por sub-agente ativo (até 3, o mais recente primeiro): ritmo, ação atual, passos, tempo
+  # one line per active sub-agent (up to 3, most recent first): pace, current action, steps, time
   agent_lines=()
   while read -r f; do
     [ -n "$f" ] || continue
-    type=$(jq -r '.agentType // "agente"' "${f%.jsonl}.meta.json" 2>/dev/null)
-    # todos os tool_use do agente: "<ferramenta>\t<alvo>" (alvo = arquivo, padrão, URL ou descrição, conforme a ferramenta)
+    type=$(jq -r '.agentType // "agent"' "${f%.jsonl}.meta.json" 2>/dev/null)
+    # all the agent's tool_use: "<tool>\t<target>" (target = file, pattern, URL or description, depending on the tool)
     calls=$(jq -r 'select(.type == "assistant") | .message.content[]? | select(.type == "tool_use")
              | .name as $n | .input as $i
              | [$n, ((if   ($n | test("^(Read|Edit|Write|NotebookEdit)$")) then $i.file_path
@@ -200,7 +200,7 @@ if [ -n "$session_id" ] && [ -d "$subdir" ]; then
                       else ($i.description // $i.command // $i.prompt) end) // ""
                  | tostring | split("\n")[0])] | @tsv' "$f" 2>/dev/null)
     steps=$(grep -c . <<<"$calls")
-    # ritmo: os últimos 8 passos, um ▰ por passo colorido pelo tipo (ler azul, buscar lilás, editar verde, comando amarelo)
+    # pace: the last 8 steps, one ▰ per step colored by type (read blue, search lilac, edit green, command yellow)
     spark=""
     while IFS=$'\t' read -r tool _; do
       case "$tool" in
@@ -211,18 +211,18 @@ if [ -n "$session_id" ] && [ -d "$subdir" ]; then
         *)                               spark+="${DIM}▰" ;;
       esac
     done < <(tail -n 8 <<<"$calls")
-    # ação atual em pt-BR: emoji + verbo + alvo curto (arquivos só pelo nome); emojis de um só
-    # code point (sem seletor de variação) para a largura ser previsível
+    # current action: emoji + verb + short target (files by name only); single
+    # code point emojis (no variation selector) so the width is predictable
     IFS=$'\t' read -r tool target < <(tail -n 1 <<<"$calls")
     case "$tool" in
-      Read)                    act="📖 lendo ${target##*/}" ;;
-      Edit|Write|NotebookEdit) act="📝 editando ${target##*/}" ;;
+      Read)                    act="📖 reading ${target##*/}" ;;
+      Edit|Write|NotebookEdit) act="📝 editing ${target##*/}" ;;
       Bash)                    act="💻 ${target}" ;;
-      Grep|Glob)               act="🔍 buscando \"${target}\"" ;;
+      Grep|Glob)               act="🔍 searching \"${target}\"" ;;
       WebSearch|WebFetch)      act="🌐 web ${target}" ;;
-      Agent|Task)              act="🤝 delegando ${target}" ;;
-      SubagentHandback)        act="✅ entregando o relatório" ;;
-      "")                      act="💭 pensando" ;;
+      Agent|Task)              act="🤝 delegating ${target}" ;;
+      SubagentHandback)        act="✅ delivering report" ;;
+      "")                      act="💭 thinking" ;;
       *)                       act="🔧 ${tool} ${target}" ;;
     esac
     [ "${#act}" -gt 60 ] && act="${act:0:59}…"
@@ -230,21 +230,21 @@ if [ -n "$session_id" ] && [ -d "$subdir" ]; then
     if [ "$age" -ge 3600 ]; then age_txt="$((age / 3600))h$(printf '%02d' $((age % 3600 / 60)))m"
     elif [ "$age" -ge 60 ]; then age_txt="$((age / 60))m$(printf '%02d' $((age % 60)))s"
     else age_txt="${age}s"; fi
-    agent_lines+=("${GREEN}${B}@${type}${R} ${spark}${R} ${act}${SEP}${DIM}passo ${steps}${R}${SEP}${DIM}${age_txt}${R}")
+    agent_lines+=("${GREEN}${B}@${type}${R} ${spark}${R} ${act}${SEP}${DIM}step ${steps}${R}${SEP}${DIM}${age_txt}${R}")
   done < <(find "$subdir" -name 'agent-*.jsonl' -mtime -60s 2>/dev/null | xargs ls -t 2>/dev/null | head -3)
 fi
-[ -n "$agents_txt" ] || agents_txt="${GREEN}@${main_agent:-principal}${R}"
-[ "${bg:-0}" -gt 0 ] && agents_txt+=" ${YELLOW}⟳${bg}${R}"   # quantos rodam em segundo plano
+[ -n "$agents_txt" ] || agents_txt="${GREEN}@${main_agent:-main}${R}"
+[ "${bg:-0}" -gt 0 ] && agents_txt+=" ${YELLOW}⟳${bg}${R}"   # how many run in the background
 
-# line1 <nível>: quanto maior o nível, mais enxuta
-#   1 sem stash · 2 sem +/- · 3 "⚠" sem "PROD" · 4 branch encurtada · 5 sem empresa · 6 sem cluster
+# line1 <level>: the higher the level, the leaner
+#   1 no stash · 2 no +/- · 3 "⚠" without "PROD" · 4 shortened branch · 5 no company · 6 no cluster
 line1() {
   local l=$1 out="" br=$branch
   if [ "$l" -lt 5 ]; then
-    out+="${SEP}${emp_c}${B}☁ ${gprofile:-?}${R}${SEP}${agents_txt}"
+    out+="${SEP}${prof_c}${B}☁ ${gprofile:-?}${R}${SEP}${agents_txt}"
   fi
   if [ "$l" -lt 6 ]; then
-    if [ -z "$kctx" ]; then out+="${SEP}${DIM}⎈ sem contexto${R}"
+    if [ -z "$kctx" ]; then out+="${SEP}${DIM}⎈ no context${R}"
     elif [[ $kctx == *prod* ]]; then
       if [ "$l" -lt 3 ]; then out+="${SEP}${RED}${B}⎈ ${kctx} ⚠ PROD${R}"; else out+="${SEP}${RED}${B}⎈ ${kctx} ⚠${R}"; fi
     else out+="${SEP}${TEAL}⎈ ${kctx}${R}"; fi
@@ -252,8 +252,8 @@ line1() {
   if [ -n "$branch" ]; then
     [ "$l" -ge 4 ] && [ "${#br}" -gt 18 ] && br="${br:0:17}…"
     out+="${SEP}${MAUVE}⎇ ${br}${R}"
-    [ "${ahead:-0}" -gt 0 ] && out+=" ${SKY}⇡${ahead}${R}"     # commits a enviar
-    [ "${behind:-0}" -gt 0 ] && out+=" ${PEACH}⇣${behind}${R}"  # commits a puxar
+    [ "${ahead:-0}" -gt 0 ] && out+=" ${SKY}⇡${ahead}${R}"     # commits to push
+    [ "${behind:-0}" -gt 0 ] && out+=" ${PEACH}⇣${behind}${R}"  # commits to pull
     [ "$l" -lt 2 ] && out+=" ${GREEN}+${ins:-0}${R}${DIM}/${R}${RED}-${del:-0}${R}"
     [ "$l" -lt 1 ] && [ "${stashes:-0}" -gt 0 ] && out+=" ${YELLOW}⚑ ${stashes}${R}"
     if [ -n "$pr_num" ]; then
@@ -264,13 +264,13 @@ line1() {
   printf '%s' "${out#"$SEP"}"
 }
 
-# ===== dados da linha 2: sessão ===============================================================
+# ===== line 2 data: session ===================================================================
 
-case "$model" in   # selo do modelo: fundo pela família, texto escuro
-  *Opus*)   mc="250 179 135" ;;   # pêssego
-  *Sonnet*) mc="137 180 250" ;;   # azul
-  *Haiku*)  mc="166 227 161" ;;   # verde
-  *Fable*)  mc="203 166 247" ;;   # lilás
+case "$model" in   # model badge: background by family, dark text
+  *Opus*)   mc="250 179 135" ;;   # peach
+  *Sonnet*) mc="137 180 250" ;;   # blue
+  *Haiku*)  mc="166 227 161" ;;   # green
+  *Fable*)  mc="203 166 247" ;;   # lilac
   *)        mc="180 190 254" ;;
 esac
 case "$effort" in
@@ -286,9 +286,9 @@ dur_s=$(( ${dur_ms%.*} / 1000 ))
 if [ "$dur_s" -ge 3600 ]; then dur_txt="$((dur_s / 3600))h$(printf '%02d' $((dur_s % 3600 / 60)))m"
 else dur_txt="$((dur_s / 60))m"; fi
 
-# line2 <nível>: quanto maior o nível, mais enxuta
-#   1 sem cache · 2 sem 7d · 3 sem tokens do ctx · 4 sem reset do 5h · 5 sem rótulo do esforço
-#   6 $ sem barra · 7 ctx sem barra · 8 5h sem barra · 9 sem esforço/🧠/⚡ · 10 sem duração
+# line2 <level>: the higher the level, the leaner
+#   1 no cache · 2 no 7d · 3 no ctx tokens · 4 no 5h reset · 5 no effort label
+#   6 $ without bar · 7 ctx without bar · 8 5h without bar · 9 no effort/🧠/⚡ · 10 no duration
 line2() {
   local l=$1 out
   # shellcheck disable=SC2086
@@ -316,15 +316,15 @@ line2() {
   if [ "$l" -lt 2 ] && [ -n "$rl7_pct" ]; then
     out+="${SEP}${LAV}7d${R} $(bar "$rl7_pct" 6) $(pct_color "$rl7_pct")${B}${rl7_pct}%${R}"
   fi
-  if [ "$l" -lt 1 ] && [ -n "$cache_hit" ]; then   # cache de prompt: quente = azul, frio = cinza
+  if [ "$l" -lt 1 ] && [ -n "$cache_hit" ]; then   # prompt cache: warm = blue, cold = gray
     if [ "$cache_warm" = "true" ]; then out+="${SEP}${SKY}❄ ${cache_hit}%${R}"
-    else out+="${SEP}${DIM}❄ ${cache_hit}% frio${R}"; fi
+    else out+="${SEP}${DIM}❄ ${cache_hit}% cold${R}"; fi
   fi
   [ "$l" -lt 10 ] && out+="${SEP}${LAV}⏱ ${dur_txt}${R}"
   printf '%s' "$out"
 }
 
-# fit <função> <último nível>: o primeiro nível que cabe em $max (ou o último)
+# fit <function> <last level>: the first level that fits in $max (or the last)
 fit() {
   local l out
   for ((l = 0; l <= $2; l++)); do
@@ -334,10 +334,10 @@ fit() {
   printf '%s' "$out"
 }
 
-# --- PRs criadas NESTA sessão (e pelos sub-agentes dela), com estado e checks --------------------
-# Vêm do histórico da sessão: cada `gh pr create` e a URL que ele devolveu. Ficam até serem
-# mergeadas (fechadas sem merge continuam, marcadas como fechadas). Outra sessão no mesmo
-# repo não entra. Estado/checks via gh, em cache de 2 min atualizado em segundo plano.
+# --- PRs created in THIS session (and by its sub-agents), with state and checks ------------------
+# They come from the session history: each `gh pr create` and the URL it returned. They stay until
+# merged (closed without merge stay, marked as closed). Another session in the same
+# repo is not included. State/checks via gh, cached for 2 min and refreshed in the background.
 pr_lines=()
 if [ -n "$session_id" ] && [ -f "$transcript" ]; then
   prs_cache="${TMPDIR:-/tmp}/claude-statusline-prs-${session_id}"
@@ -354,8 +354,8 @@ if [ -n "$session_id" ] && [ -f "$transcript" ]; then
                  | grep -oE 'https://github\.com/[^/" ]+/[^/" ]+/pull/[0-9]+'
              done | awk '!seen[$0]++' | tail -n 15)
       for u in $urls; do
-        # checks obrigatórios das regras do branch base: os que ainda não reportaram ("Expected")
-        # não aparecem no rollup da PR, então entram como pendentes
+        # required checks from the base branch rules: the ones that have not reported yet ("Expected")
+        # do not show in the PR rollup, so they count as pending
         repo=$(sed -E 's#https://github.com/([^/]+/[^/]+)/pull/.*#\1#' <<<"$u")
         pr=$(gh pr view "$u" --json number,title,url,state,isDraft,baseRefName,mergeStateStatus,statusCheckRollup 2>/dev/null) || continue
         base=$(jq -r .baseRefName <<<"$pr")
@@ -367,8 +367,8 @@ if [ -n "$session_id" ] && [ -f "$transcript" ]; then
           | ([$c[].r] + [$missing[] | "EXPECTED"]) as $all
           | [.number, .state, .isDraft, ($all | length),
              ([$all[] | select(. == "SUCCESS" or . == "NEUTRAL" or . == "SKIPPED")] | length),
-             # verde = todos os checks reportados com sucesso (e os obrigatórios, se houver, presentes);
-             # não depende do "merge liberado": a main pode não exigir checks
+             # green = all reported checks succeeded (and the required ones, if any, present);
+             # does not depend on "cleared to merge": main may not require checks
              (if any($all[]; . == "FAILURE" or . == "ERROR" or . == "CANCELLED" or . == "TIMED_OUT") then "fail"
               elif ($all | length) == 0 then "none"
               elif any($all[]; . == "PENDING" or . == "IN_PROGRESS" or . == "QUEUED" or . == "EXPECTED" or . == "") then "pending"
@@ -380,7 +380,7 @@ if [ -n "$session_id" ] && [ -f "$transcript" ]; then
   fi
   while IFS=$'\t' read -r n state draft total passed ci url title; do
     [ -n "$n" ] || continue
-    case "$state" in MERGED|CLOSED) continue ;; esac   # só PRs abertas: mergeadas e fechadas somem da barra
+    case "$state" in MERGED|CLOSED) continue ;; esac   # open PRs only: merged and closed ones disappear from the bar
     [ "${#pr_lines[@]}" -ge 6 ] && break
     case "$state:$ci" in
       MERGED:*)  c=$MAUVE;  icon="⇄" ;;
@@ -394,20 +394,20 @@ if [ -n "$session_id" ] && [ -f "$transcript" ]; then
     line="${c}${B}${icon} $(link "$url" "#${n}")${R} ${title}"
     case "$state" in
       MERGED) line+="${SEP}${MAUVE}merged${R}" ;;
-      CLOSED) line+="${SEP}${DIM}fechada${R}" ;;
+      CLOSED) line+="${SEP}${DIM}closed${R}" ;;
       *) [ "$total" -gt 0 ] && line+="${SEP}${c}checks ${passed}/${total}${R}"
-         [ "$draft" = "true" ] && line+="${SEP}${DIM}rascunho${R}" ;;
+         [ "$draft" = "true" ] && line+="${SEP}${DIM}draft${R}" ;;
     esac
     pr_lines+=("$line")
   done < "$prs_cache" 2>/dev/null
 fi
 
-# moldura: sem PRs, duas linhas; com PRs, um "│" separa, uma linha por PR e um "╰─" fecha
+# frame: without PRs, two lines; with PRs, a "│" separates, one line per PR and a "╰─" closes
 fit_line() { local a=$1; while [ "$(vis "$a")" -gt "$max" ] && [ "${#a}" -gt 20 ]; do a="${a%?}"; done; printf '%s' "$a"; }
 l1=$(fit line1 6); l2=$(fit line2 10)
-# --- agent map: painel dos sub-agentes ativos (imagem no terminal, texto no resto) --------
-# O hook roda sem terminal de controle, então sobe a árvore de processos até achar o tty
-# do Claude: é por ele que a imagem é transmitida (o TUI filtra a sequência no stdout).
+# --- agent map: panel of active sub-agents (image in the terminal, text elsewhere) --------
+# The hook runs without a controlling terminal, so it walks up the process tree until it finds
+# Claude's tty: the image is transmitted through it (the TUI filters the sequence on stdout).
 map_lines=()
 if [ -n "$session_id" ] && [ -d "$subdir" ]; then
   amtty=""; ampid=$PPID
@@ -423,7 +423,7 @@ fi
 
 first="${SEPC}╭─${R} $l1"
 if [ -n "$session_name" ]; then
-  # nome da sessão como rótulo da moldura: "╭─ nome ───", com o traço até a largura do conteúdo
+  # session name as the frame label: "╭─ name ───", with the rule up to the content width
   title=$session_name
   [ "${#title}" -gt $(( max - 8 )) ] && title="${title:0:$(( max - 9 ))}…"
   w1=$(vis "$l1"); w2=$(vis "$l2"); w=$(( w1 > w2 ? w1 : w2 ))
@@ -436,14 +436,14 @@ if [ "${#pr_lines[@]}" -eq 0 ] && [ "${#map_lines[@]}" -eq 0 ]; then
   printf '%s\n%s' "$first" "${SEPC}╰─${R} $l2"
 else
   printf '%s\n%s' "$first" "${SEPC}├─${R} $l2"
-  # as PRs da sessão (os agentes ativos já aparecem na linha 1: @executor×2 ⟳2)
+  # the session PRs (active agents already show on line 1: @executor×2 ⟳2)
   if [ "${#pr_lines[@]}" -gt 0 ]; then
     printf '\n%s' "${SEPC}│${R}"
     for a in "${pr_lines[@]}"; do printf '\n%s %s' "${SEPC}├─${R}" "$(fit_line "$a")${R}"; done
   fi
-  # o painel dos agentes: linhas já prontas (placeholders da imagem ou o desenho em texto),
-  # impressas cruas — cortá-las quebraria o mapeamento célula↔imagem
+  # the agents panel: ready-made lines (image placeholders or the text drawing),
+  # printed raw — cutting them would break the cell↔image mapping
   for a in "${map_lines[@]}"; do printf '\n%s' "$a"; done
-  # fecha a moldura numa linha própria: separa da linha do Claude Code (auto mode…)
+  # closes the frame on its own line: separates it from the Claude Code line (auto mode…)
   printf '\n%s' "${SEPC}╰─${R}"
 fi

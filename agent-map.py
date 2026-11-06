@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Agent map da status line: lista dos sub-agentes ATIVOS + fluxograma, como imagem.
+"""Status line agent map: list of ACTIVE sub-agents + flowchart, as an image.
 
-Uso:  agent-map.py <dir dos subagents> <tty|-> <colunas do terminal> <session_id>
+Usage: agent-map.py <subagents dir> <tty|-> <terminal columns> <session_id>
 
-A imagem vai direto para o tty (o TUI do Claude filtra a sequência no stdout);
-no stdout saem só os placeholders Unicode do protocolo kitty, que são texto comum.
-Sem terminal compatível, cai para um desenho em texto. Sem agente ativo, não imprime nada.
+The image goes straight to the tty (Claude's TUI filters the sequence on stdout);
+stdout only gets the kitty protocol Unicode placeholders, which are plain text.
+Without a compatible terminal, falls back to a text drawing. With no active agent, prints nothing.
 """
 import hashlib
 import json
@@ -13,9 +13,9 @@ import os
 import sys
 import time
 
-MAX_AGE = int(os.environ.get("AGENT_MAP_MAX_AGE", "60"))   # seg. desde a última escrita
+MAX_AGE = int(os.environ.get("AGENT_MAP_MAX_AGE", "60"))   # sec. since the last write
 ROWS = int(os.environ.get("AGENT_MAP_ROWS", "4"))
-PER_COL = 5          # caixas por coluna antes de abrir outra
+PER_COL = 5          # boxes per column before opening another
 CELL_W, CELL_H, DPR = 10, 20, 2
 CACHE = os.path.expanduser("~/.claude/cache/agent-map")
 _H = os.path.expanduser("~")
@@ -33,14 +33,14 @@ DIAC = [0x0305, 0x030D, 0x030E, 0x0310, 0x0312, 0x033D, 0x033E, 0x033F, 0x0346, 
         0x034B, 0x034C, 0x0350, 0x0351, 0x0352, 0x0357]
 PH = chr(0x10EEEE)
 
-ACOES = {"Read": "lendo", "Edit": "editando", "Write": "escrevendo", "NotebookEdit": "editando",
-         "Bash": "rodando", "Grep": "buscando", "Glob": "buscando", "WebSearch": "pesquisando",
-         "WebFetch": "lendo a web", "Agent": "delegando", "Task": "delegando",
-         "SubagentHandback": "entregando o relatório"}
+ACTIONS = {"Read": "reading", "Edit": "editing", "Write": "writing", "NotebookEdit": "editing",
+         "Bash": "running", "Grep": "searching", "Glob": "searching", "WebSearch": "searching",
+         "WebFetch": "reading web", "Agent": "delegating", "Task": "delegating",
+         "SubagentHandback": "delivering report"}
 
 
 def term_bg():
-    """Cor de fundo do terminal: env > config do Ghostty > arquivo do tema > padrão."""
+    """Terminal background color: env > Ghostty config > theme file > default."""
     def parse(v):
         v = v.strip().lstrip("#")
         if len(v) == 6:
@@ -99,7 +99,7 @@ def fmt_tok(n):
 
 
 def last_json_objs(data, want, limit=400):
-    """Varre as últimas linhas do .jsonl de trás para frente, devolvendo as que casam."""
+    """Scans the last lines of the .jsonl backwards, returning the ones that match."""
     out = []
     for line in reversed(data.splitlines()[-limit:]):
         if not line.startswith(b"{"):
@@ -167,13 +167,13 @@ def read_agents(subdir):
                 start = st.st_birthtime
             except AttributeError:
                 pass
-        verbo = ACOES.get(tool, tool.lower() if tool else "pensando")
-        alvo = os.path.basename(target) if tool in ("Read", "Edit", "Write", "NotebookEdit") else target
+        verb = ACTIONS.get(tool, tool.lower() if tool else "thinking")
+        obj = os.path.basename(target) if tool in ("Read", "Edit", "Write", "NotebookEdit") else target
         agents.append({
-            "type": meta.get("agentType") or "agente",
+            "type": meta.get("agentType") or "agent",
             "desc": meta.get("description") or "",
             "age": fmt_age(now - start), "tok": fmt_tok(tokens), "steps": steps,
-            "acao": f"{verbo} {alvo}".strip()[:38],
+            "acao": f"{verb} {obj}".strip()[:38],
             "mtime": st.st_mtime, "dot": GREEN,
         })
     agents.sort(key=lambda a: -a["mtime"])
@@ -201,14 +201,14 @@ def font(size, bold=False):
 
 
 def panel_cols(n):
-    """Largura do painel em celulas: cresce com o numero de colunas de caixas."""
+    """Panel width in cells: grows with the number of box columns."""
     ncol = 1 + (n - 1) // PER_COL
     px = 30 + 22 + 26 + ncol * (80 + 14) + 20
     return max(10, -(-px // (CELL_W * DPR)))
 
 
 def render(agents, cols):
-    """So o fluxo: raiz, barramento e uma caixinha por agente ativo. Sem texto."""
+    """Flow only: root, bus and one small box per active agent. No text."""
     from PIL import Image, ImageDraw
     W, H = cols * CELL_W * DPR, ROWS * CELL_H * DPR
     img = Image.new("RGB", (W, H), term_bg())
@@ -262,8 +262,8 @@ def placeholders(img_id, cols, gutter):
             + (PH + chr(DIAC[i])) * (cols - 1) + "\033[0m" for i in range(ROWS)]
 
 
-def texto(agents, cols, gutter):
-    """Fallback sem imagem: um cartão por agente (até 3), senão uma linha por agente."""
+def text_fallback(agents, cols, gutter):
+    """Image-less fallback: one card per agent (up to 3), otherwise one line per agent."""
     G, S, T, D = "\033[38;2;88;91;112m", "\033[38;2;78;82;106m", "\033[0m", "\033[38;2;165;173;203m"
     GR, R = "\033[38;2;166;218;149m", "\033[0m"
     out = []
@@ -272,22 +272,22 @@ def texto(agents, cols, gutter):
         tops = " ".join("╭" + "─" * w + "╮" for _ in agents)
         bots = " ".join("╰" + "─" * w + "╯" for _ in agents)
         out.append(f"{gutter}{S}{tops}{R}")
-        for campo in ("at", "desc", "num"):
-            linha = []
+        for field in ("at", "desc", "num"):
+            row = []
             for a in agents:
-                if campo == "at":
+                if field == "at":
                     txt = f"{GR}● @{a['type']}{R}"
                     pad = w - 4 - len(a["type"])
-                elif campo == "desc":
+                elif field == "desc":
                     s = (a["desc"] or a["acao"])[:w - 3]
                     txt = f"{D}  {s}{R}"
                     pad = w - 3 - len(s)
                 else:
-                    s = f"{a['age']} · {a['tok']} · passo {a['steps']}"[:w - 3]
+                    s = f"{a['age']} · {a['tok']} · step {a['steps']}"[:w - 3]
                     txt = f"{D}  {s}{R}"
                     pad = w - 3 - len(s)
-                linha.append(f"{S}│{R} {txt}{' ' * max(pad, 0)}{S}│{R}")
-            out.append(gutter + " ".join(linha))
+                row.append(f"{S}│{R} {txt}{' ' * max(pad, 0)}{S}│{R}")
+            out.append(gutter + " ".join(row))
         out.append(f"{gutter}{S}{bots}{R}")
     else:
         for a in agents[:6]:
@@ -302,20 +302,20 @@ def main():
     subdir, tty, cols, session_id = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
     agents = read_agents(subdir)
     if not agents and os.path.exists(os.path.expanduser("~/.claude/.agent-map-demo")):
-        # modo demo: confere o caminho inteiro (imagem + placeholders) sem agente rodando
+        # demo mode: exercises the whole path (image + placeholders) with no agent running
         agents = [{"type": t, "desc": d, "age": a, "tok": k, "steps": p, "acao": "", "dot": GREEN}
                   for t, d, a, k, p in [
                       ("executor", "Build the admin UI", "12m29s", "134.3k", 48),
                       ("revisor", "Review the whole skeleton", "9m28s", "171.5k", 31),
-                      ("geral", "Localizar os hooks do deployer", "2m04s", "21.8k", 12)]]
+                      ("geral", "Locate the deployer hooks", "2m04s", "21.8k", 12)]]
     if not agents:
         return 0
     gutter = "\033[38;2;88;91;112m│\033[0m  "
-    larg = max(40, min(cols - 6, 160))          # largura util do terminal (fallback em texto)
-    cols = max(10, min(panel_cols(len(agents)), larg))   # largura do painel de imagem
+    term_w = max(40, min(cols - 6, 160))          # usable terminal width (text fallback)
+    cols = max(10, min(panel_cols(len(agents)), term_w))   # image panel width
     grafico = tty not in ("", "-") and os.path.exists(f"/dev/{tty}") and os.access(f"/dev/{tty}", os.W_OK)
     if not grafico:
-        print("\n".join(texto(agents, larg, gutter)))
+        print("\n".join(text_fallback(agents, term_w, gutter)))
         return 0
 
     img_id = int(hashlib.sha1(session_id.encode()).hexdigest()[:6], 16) or 1
@@ -329,7 +329,7 @@ def main():
             old = fh.read().strip()
     except OSError:
         pass
-    # retransmite quando o conteúdo muda ou a cada 60s (caso o terminal tenha largado a imagem)
+    # retransmit when the content changes or every 60s (in case the terminal dropped the image)
     stale = True
     try:
         stale = time.time() - os.stat(esc_path).st_mtime > 60
@@ -339,7 +339,7 @@ def main():
         try:
             esc = kitty_escape(render(agents, cols), img_id, cols)
         except Exception:
-            print("\n".join(texto(agents, larg, gutter)))
+            print("\n".join(text_fallback(agents, term_w, gutter)))
             return 0
         with open(esc_path, "w") as fh:
             fh.write(esc)
@@ -349,7 +349,7 @@ def main():
         with open(f"/dev/{tty}", "w") as fh, open(esc_path) as src:
             fh.write(src.read())
     except OSError:
-        print("\n".join(texto(agents, larg, gutter)))
+        print("\n".join(text_fallback(agents, term_w, gutter)))
         return 0
     print("\n".join(placeholders(img_id, cols, gutter)))
     return 0
