@@ -14,12 +14,14 @@ import sys
 import time
 
 MAX_AGE = int(os.environ.get("AGENT_MAP_MAX_AGE", "60"))   # sec. since the last write
+STALE = 1800         # an unfinished agent older than this is treated as abandoned
 ROWS = int(os.environ.get("AGENT_MAP_ROWS", "4"))
 MAX_ROWS = 8         # the panel grows vertically only up to this
 BOX_W = 40           # box size, in logical px
 BOX_H, BOX_GAP = 9, 3
 CELL_W, CELL_H, DPR = 10, 20, 2
-CACHE = os.path.expanduser("~/.claude/cache/agent-map")
+CACHE = os.path.join(os.environ.get("CLAUDE_CONFIG_DIR")
+                     or os.path.expanduser("~/.claude"), "cache", "agent-map")
 _H = os.path.expanduser("~")
 FONTS = [os.environ["AGENT_MAP_FONT"]] if os.environ.get("AGENT_MAP_FONT") else []
 FONTS += [f"{_H}/Library/Fonts/FiraCodeNerdFontMono-{{}}.ttf",
@@ -130,7 +132,7 @@ def read_agents(subdir):
             st = os.stat(path)
         except OSError:
             continue
-        if now - st.st_mtime > MAX_AGE:
+        if now - st.st_mtime > STALE:
             continue
         meta = {}
         try:
@@ -138,8 +140,9 @@ def read_agents(subdir):
                 meta = json.load(fh)
         except Exception:
             pass
-        if meta.get("finished") or meta.get("stoppedByUser"):
+        if meta.get("stoppedByUser"):
             continue
+        done = bool(meta.get("finished"))
         with open(path, "rb") as fh:
             data = fh.read()
         steps = data.count(b'"type":"tool_use"')
@@ -180,6 +183,7 @@ def read_agents(subdir):
             "age": fmt_age(now - start), "tok": fmt_tok(tokens), "steps": steps,
             "acao": f"{verb} {obj}".strip()[:38],
             "mtime": st.st_mtime, "dot": GREEN,
+            "fresh": (now - st.st_mtime <= MAX_AGE) and not done,
         })
     # parentesco: o toolUseId de um agente aparece no transcript de quem o disparou;
     # quando não aparece em nenhum, ele foi disparado pela sessão principal.
@@ -189,11 +193,29 @@ def read_agents(subdir):
     for i, a in enumerate(agents):
         if not a["tuid"]:
             continue
-        needle = a["tuid"].encode()
+        needle = b'"id":"' + a["tuid"].encode() + b'"'
         for j, data in enumerate(raw):
             if j != i and needle in data:
                 a["parent"] = j
                 break
+    ativo = [a["fresh"] for a in agents]
+    for _ in range(len(agents)):
+        mudou = False
+        for i, a in enumerate(agents):
+            p = a["parent"]
+            if ativo[i] and 0 <= p < len(agents) and not ativo[p]:
+                ativo[p] = True
+                mudou = True
+        if not mudou:
+            break
+    for i, a in enumerate(agents):
+        if ativo[i] and not a["fresh"]:
+            a["dot"] = OVER0          # está esperando os filhos, não trabalhando
+    novo = [i for i, v in enumerate(ativo) if v]
+    pos = {old: new for new, old in enumerate(novo)}
+    agents = [agents[i] for i in novo]
+    for a in agents:
+        a["parent"] = pos.get(a["parent"], -1)
     return agents
 
 
@@ -241,6 +263,19 @@ def tree(agents):
     for r in roots:
         walk(r, 0)
     return kids, roots, depth, slot, max(nxt[0], 1)
+
+
+def cap_agents(agents):
+    """Keeps only what fits in the tallest panel; a dropped parent promotes its children."""
+    usable = MAX_ROWS * CELL_H * DPR - 24 * DPR
+    room = max(1, int((usable + BOX_GAP * DPR) // ((5 + BOX_GAP) * DPR)))
+    if len(agents) <= room:
+        return agents, 0
+    kept = agents[:room]                       # já vem do mais recente para o mais antigo
+    for a in kept:
+        if a.get("parent", -1) >= room:
+            a["parent"] = -1
+    return kept, len(agents) - room
 
 
 def panel_size(agents):
@@ -366,6 +401,7 @@ def main():
         return 0
     gutter = "\033[38;2;88;91;112m│\033[0m  "
     term_w = max(40, min(cols - 6, 160))          # usable terminal width (text fallback)
+    agents, extra = cap_agents(agents)
     cols, rows = panel_size(agents)
     cols = max(10, min(cols, term_w))                      # image panel width
     grafico = tty not in ("", "-") and os.path.exists(f"/dev/{tty}") and os.access(f"/dev/{tty}", os.W_OK)
@@ -396,10 +432,18 @@ def main():
         except Exception:
             print("\n".join(text_fallback(agents, term_w, gutter)))
             return 0
-        with open(esc_path, "w") as fh:
+        # escrita atômica: outra invocação (refresh de 5s) pode estar lendo o arquivo,
+        # e meia sequência kitty deixa o terminal com a imagem antiga.
+        tmp_esc = f"{esc_path}.{os.getpid()}"
+        with open(tmp_esc, "w") as fh:
             fh.write(esc)
-        with open(key_path, "w") as fh:
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp_esc, esc_path)
+        tmp_key = f"{key_path}.{os.getpid()}"
+        with open(tmp_key, "w") as fh:
             fh.write(key)
+        os.replace(tmp_key, key_path)
     try:
         with open(f"/dev/{tty}", "w") as fh, open(esc_path) as src:
             fh.write(src.read())

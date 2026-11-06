@@ -58,12 +58,16 @@ IFS=$'\x1f' read -r model dir ctx size ctx_pct tok_in tok_out cost dur_ms pr_num
       (.agent.name // ""),
       (.session_name // "") ] | map(tostring) | join("\u001f")' <<<"$input")
 
+# percentuais podem vir fracionários do Claude Code; o bash só faz aritmética inteira
+ctx_pct=${ctx_pct%.*}; rl5_pct=${rl5_pct%.*}; rl7_pct=${rl7_pct%.*}; cache_hit=${cache_hit%.*}
+
 fmt_k() { awk -v n="$1" 'BEGIN { if (n >= 1e6) printf "%.1fM", n/1e6; else if (n >= 1000) printf "%dk", n/1000; else printf "%d", n }'; }
 link() { printf '\e]8;;%s\e\\%s\e]8;;\e\\' "$1" "$2"; }   # OSC 8: clickable text
 
 # bar <pct> [width] -> cells with a green→yellow→red gradient; empty ones in gray
 bar() {
-  local p=$1 w=${2:-10} f i r g b t out=""
+  local p=${1%.*} w=${2:-10} f i r g b t out=""
+  [ -z "$p" ] && p=0
   [ "$p" -gt 100 ] && p=100; [ "$p" -lt 0 ] && p=0
   f=$(( (p * w + 50) / 100 )); [ "$p" -gt 0 ] && [ "$f" -eq 0 ] && f=1
   for ((i = 0; i < w; i++)); do
@@ -231,7 +235,8 @@ if [ -n "$session_id" ] && [ -d "$subdir" ]; then
     elif [ "$age" -ge 60 ]; then age_txt="$((age / 60))m$(printf '%02d' $((age % 60)))s"
     else age_txt="${age}s"; fi
     agent_lines+=("${GREEN}${B}@${type}${R} ${spark}${R} ${act}${SEP}${DIM}step ${steps}${R}${SEP}${DIM}${age_txt}${R}")
-  done < <(find "$subdir" -name 'agent-*.jsonl' -mtime -60s 2>/dev/null | xargs ls -t 2>/dev/null | head -3)
+  done < <(find "$subdir" -name 'agent-*.jsonl' -mtime -60s -print0 2>/dev/null \
+             | xargs -0 ls -t 2>/dev/null | head -3)
 fi
 [ -n "$agents_txt" ] || agents_txt="${GREEN}@${main_agent:-main}${R}"
 [ "${bg:-0}" -gt 0 ] && agents_txt+=" ${YELLOW}⟳${bg}${R}"   # how many run in the background
@@ -280,7 +285,6 @@ dots=""; for ((i = 1; i <= 5; i++)); do [ "$i" -le "$en" ] && dots+="●" || dot
 pct=""; [ "${size:-0}" -gt 0 ] && pct=${ctx_pct:-$(( ctx * 100 / size ))}
 budget="${STATUSLINE_BUDGET_USD:-10}"
 cost_pct=$(awk -v c="$cost" -v b="$budget" 'BEGIN { printf "%d", (b > 0 ? c * 100 / b : 0) }')
-rl5_pct=${rl5_pct%.*}; rl7_pct=${rl7_pct%.*}
 rl5_at=""; [ -n "$rl5_reset" ] && rl5_at=$(date -r "${rl5_reset%.*}" +%H:%M 2>/dev/null)
 dur_s=$(( ${dur_ms%.*} / 1000 ))
 if [ "$dur_s" -ge 3600 ]; then dur_txt="$((dur_s / 3600))h$(printf '%02d' $((dur_s % 3600 / 60)))m"
@@ -418,7 +422,7 @@ if [ -n "$session_id" ] && [ -d "$subdir" ]; then
   done
   while IFS= read -r ml; do
     [ -n "$ml" ] && map_lines+=("$ml")
-  done < <(python3 "$HOME/.claude/agent-map.py" "$subdir" "${amtty:--}" "$cols" "$session_id" 2>/dev/null)
+  done < <(python3 "$CONFDIR/agent-map.py" "$subdir" "${amtty:--}" "$cols" "$session_id" 2>/dev/null)
 fi
 
 first="${SEPC}╭─${R} $l1"
