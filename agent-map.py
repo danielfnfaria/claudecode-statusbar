@@ -15,7 +15,9 @@ import time
 
 MAX_AGE = int(os.environ.get("AGENT_MAP_MAX_AGE", "60"))   # sec. since the last write
 ROWS = int(os.environ.get("AGENT_MAP_ROWS", "4"))
-PER_COL = 5          # boxes per column before opening another
+MAX_ROWS = 8         # the panel grows vertically only up to this
+BOX_W = 40           # box size, in logical px
+BOX_H, BOX_GAP = 9, 3
 CELL_W, CELL_H, DPR = 10, 20, 2
 CACHE = os.path.expanduser("~/.claude/cache/agent-map")
 _H = os.path.expanduser("~")
@@ -117,7 +119,7 @@ def last_json_objs(data, want, limit=400):
 
 def read_agents(subdir):
     now = time.time()
-    agents = []
+    agents, raw = [], []
     try:
         names = [n for n in os.listdir(subdir) if n.startswith("agent-") and n.endswith(".jsonl")]
     except OSError:
@@ -169,20 +171,35 @@ def read_agents(subdir):
                 pass
         verb = ACTIONS.get(tool, tool.lower() if tool else "thinking")
         obj = os.path.basename(target) if tool in ("Read", "Edit", "Write", "NotebookEdit") else target
+        raw.append(data)
         agents.append({
+            "tuid": meta.get("toolUseId") or "",
+            "parent": -1,
             "type": meta.get("agentType") or "agent",
             "desc": meta.get("description") or "",
             "age": fmt_age(now - start), "tok": fmt_tok(tokens), "steps": steps,
             "acao": f"{verb} {obj}".strip()[:38],
             "mtime": st.st_mtime, "dot": GREEN,
         })
-    agents.sort(key=lambda a: -a["mtime"])
+    # parentesco: o toolUseId de um agente aparece no transcript de quem o disparou;
+    # quando não aparece em nenhum, ele foi disparado pela sessão principal.
+    order = sorted(range(len(agents)), key=lambda i: -agents[i]["mtime"])
+    agents = [agents[i] for i in order]
+    raw = [raw[i] for i in order]
+    for i, a in enumerate(agents):
+        if not a["tuid"]:
+            continue
+        needle = a["tuid"].encode()
+        for j, data in enumerate(raw):
+            if j != i and needle in data:
+                a["parent"] = j
+                break
     return agents
 
 
 def state_key(agents, cols):
     h = hashlib.sha1()
-    h.update(f"{cols}|{ROWS}|".encode())
+    h.update(f"{cols}|".encode())
     for a in agents:
         h.update(f"{a['type']}|{a['desc']}|{a['age']}|{a['tok']}|{a['acao']}|".encode())
     return h.hexdigest()[:16]
@@ -200,49 +217,85 @@ def font(size, bold=False):
     return ImageFont.load_default()
 
 
-def panel_cols(n):
-    """Panel width in cells: grows with the number of box columns."""
-    ncol = 1 + (n - 1) // PER_COL
-    px = 30 + 22 + 26 + ncol * (80 + 14) + 20
-    return max(10, -(-px // (CELL_W * DPR)))
+def tree(agents):
+    """-> (filhos, raizes, profundidade, faixa de cada no, total de faixas)"""
+    kids = {i: [] for i in range(len(agents))}
+    roots = []
+    for i, a in enumerate(agents):
+        if 0 <= a.get("parent", -1) < len(agents):
+            kids[a["parent"]].append(i)
+        else:
+            roots.append(i)
+    depth, slot, nxt = {}, {}, [0]
+
+    def walk(i, d):
+        depth[i] = d
+        if not kids[i]:
+            slot[i] = nxt[0]
+            nxt[0] += 1
+        else:
+            for c in kids[i]:
+                walk(c, d + 1)
+            slot[i] = sum(slot[c] for c in kids[i]) / len(kids[i])
+
+    for r in roots:
+        walk(r, 0)
+    return kids, roots, depth, slot, max(nxt[0], 1)
 
 
-def render(agents, cols):
-    """Flow only: root, bus and one small box per active agent. No text."""
+def panel_size(agents):
+    """Cells the panel needs: width from the tree depth, height from the leaf count."""
+    _, _, depth, _, leaves = tree(agents)
+    maxd = (max(depth.values()) + 1) if depth else 1
+    w_px = 15 + 11 + 15 + maxd * (BOX_W + 14) * DPR + 16
+    h_px = leaves * (BOX_H + BOX_GAP) * DPR + 24 * DPR
+    return (max(10, -(-int(w_px) // (CELL_W * DPR))),
+            min(MAX_ROWS, max(ROWS, -(-int(h_px) // (CELL_H * DPR)))))
+
+
+def render(agents, cols, rows):
+    """Flow only: the session, one box per active agent, nested under whoever spawned it."""
     from PIL import Image, ImageDraw
-    W, H = cols * CELL_W * DPR, ROWS * CELL_H * DPR
+    W, H = cols * CELL_W * DPR, rows * CELL_H * DPR
     img = Image.new("RGB", (W, H), term_bg())
     d = ImageDraw.Draw(img)
-    n = len(agents)
-    ncol = 1 + (n - 1) // PER_COL
-    per = -(-n // ncol)
+    kids, roots, depth, slot, leaves = tree(agents)
+
     x0, y0, y1 = 15 * DPR, 12 * DPR, H - 12 * DPR
     ry = (y0 + y1) / 2
     d.rounded_rectangle([x0, ry - 7 * DPR, x0 + 11 * DPR, ry + 7 * DPR], radius=3 * DPR,
                         fill=SURF0, outline=OVER0, width=DPR)
-    bw, gap = 40 * DPR, 3 * DPR
-    bh = max(5 * DPR, min(9 * DPR, (y1 - y0 - (per - 1) * gap) / per))
-    for c in range(ncol):
-        inc = min(per, n - c * per)
-        span = inc * (bh + gap) - gap
-        ytop = ry - span / 2
-        x = x0 + 26 * DPR + c * (bw + 7 * DPR)
-        bus = x - 7 * DPR
-        d.line([(bus, ytop + bh / 2), (bus, ytop + span - bh / 2)], fill=SURF1, width=DPR)
-        src = x0 + 11 * DPR if c == 0 else x0 + 26 * DPR + (c - 1) * (bw + 7 * DPR) + bw
-        d.line([(src, ry), (bus, ry)], fill=SURF1, width=DPR)
-        for k in range(inc):
-            a = agents[c * per + k]
-            y = ytop + k * (bh + gap)
-            d.line([(bus, y + bh / 2), (x, y + bh / 2)], fill=SURF1, width=DPR)
-            d.rounded_rectangle([x, y, x + bw, y + bh], radius=2 * DPR, fill=SURF0,
-                                outline=a["dot"], width=DPR)
-            d.rectangle([x + 4 * DPR, y + bh / 2 - 1.5 * DPR, x + 9 * DPR, y + bh / 2 + 1.5 * DPR],
-                        fill=a["dot"])
+
+    bw = BOX_W * DPR
+    gap = BOX_GAP * DPR
+    bh = max(5 * DPR, min(BOX_H * DPR, (y1 - y0 - (leaves - 1) * gap) / leaves))
+    span = leaves * (bh + gap) - gap
+    ytop = ry - span / 2
+
+    def box_x(i):
+        return x0 + 26 * DPR + depth[i] * (bw + 14 * DPR)
+
+    def box_y(i):
+        return ytop + slot[i] * (bh + gap)
+
+    for i, a in enumerate(agents):
+        x, y = box_x(i), box_y(i)
+        # ligação com quem o disparou: a sessão (raiz) ou o agente pai
+        if i in roots:
+            px, py = x0 + 11 * DPR, ry
+        else:
+            p = a.get("parent", -1)
+            px, py = box_x(p) + bw, box_y(p) + bh / 2
+        bend = px + 7 * DPR
+        d.line([(px, py), (bend, py), (bend, y + bh / 2), (x, y + bh / 2)], fill=SURF1, width=DPR)
+        d.rounded_rectangle([x, y, x + bw, y + bh], radius=2 * DPR, fill=SURF0,
+                            outline=a["dot"], width=DPR)
+        d.rectangle([x + 4 * DPR, y + bh / 2 - 1.5 * DPR, x + 9 * DPR, y + bh / 2 + 1.5 * DPR],
+                    fill=a["dot"])
     return img
 
 
-def kitty_escape(img, img_id, cols):
+def kitty_escape(img, img_id, cols, rows):
     import base64
     import io
     buf = io.BytesIO()
@@ -251,15 +304,15 @@ def kitty_escape(img, img_id, cols):
     chunks = [b64[i:i + 4096] for i in range(0, len(b64), 4096)]
     out = []
     for n, c in enumerate(chunks):
-        head = f"f=100,t=d,a=T,U=1,i={img_id},q=2,c={cols},r={ROWS}," if n == 0 else ""
+        head = f"f=100,t=d,a=T,U=1,i={img_id},q=2,c={cols},r={rows}," if n == 0 else ""
         out.append("\033_G%sm=%d;%s\033\\" % (head, 1 if n < len(chunks) - 1 else 0, c))
     return "".join(out)
 
 
-def placeholders(img_id, cols, gutter):
+def placeholders(img_id, cols, rows, gutter):
     r, g, b = (img_id >> 16) & 0xFF, (img_id >> 8) & 0xFF, img_id & 0xFF
     return [f"{gutter}\033[38;2;{r};{g};{b}m" + PH + chr(DIAC[i]) + chr(DIAC[0])
-            + (PH + chr(DIAC[i])) * (cols - 1) + "\033[0m" for i in range(ROWS)]
+            + (PH + chr(DIAC[i])) * (cols - 1) + "\033[0m" for i in range(rows)]
 
 
 def text_fallback(agents, cols, gutter):
@@ -303,23 +356,25 @@ def main():
     agents = read_agents(subdir)
     if not agents and os.path.exists(os.path.expanduser("~/.claude/.agent-map-demo")):
         # demo mode: exercises the whole path (image + placeholders) with no agent running
-        agents = [{"type": t, "desc": d, "age": a, "tok": k, "steps": p, "acao": "", "dot": GREEN}
-                  for t, d, a, k, p in [
-                      ("executor", "Build the admin UI", "12m29s", "134.3k", 48),
-                      ("revisor", "Review the whole skeleton", "9m28s", "171.5k", 31),
-                      ("geral", "Locate the deployer hooks", "2m04s", "21.8k", 12)]]
+        agents = [{"type": t, "desc": d, "age": a, "tok": k, "steps": p, "acao": "",
+                   "dot": GREEN, "parent": par, "tuid": ""}
+                  for t, d, a, k, p, par in [
+                      ("executor", "Build the admin UI", "12m29s", "134.3k", 48, -1),
+                      ("revisor", "Review the whole skeleton", "9m28s", "171.5k", 31, 0),
+                      ("geral", "Locate the deployer hooks", "2m04s", "21.8k", 12, 0)]]
     if not agents:
         return 0
     gutter = "\033[38;2;88;91;112m│\033[0m  "
     term_w = max(40, min(cols - 6, 160))          # usable terminal width (text fallback)
-    cols = max(10, min(panel_cols(len(agents)), term_w))   # image panel width
+    cols, rows = panel_size(agents)
+    cols = max(10, min(cols, term_w))                      # image panel width
     grafico = tty not in ("", "-") and os.path.exists(f"/dev/{tty}") and os.access(f"/dev/{tty}", os.W_OK)
     if not grafico:
         print("\n".join(text_fallback(agents, term_w, gutter)))
         return 0
 
     img_id = int(hashlib.sha1(session_id.encode()).hexdigest()[:6], 16) or 1
-    key = state_key(agents, cols)
+    key = state_key(agents, f"{cols}x{rows}")
     os.makedirs(CACHE, exist_ok=True)
     esc_path = os.path.join(CACHE, f"{session_id}.esc")
     key_path = os.path.join(CACHE, f"{session_id}.key")
@@ -337,7 +392,7 @@ def main():
         pass
     if old != key or stale or not os.path.exists(esc_path):
         try:
-            esc = kitty_escape(render(agents, cols), img_id, cols)
+            esc = kitty_escape(render(agents, cols, rows), img_id, cols, rows)
         except Exception:
             print("\n".join(text_fallback(agents, term_w, gutter)))
             return 0
@@ -351,7 +406,7 @@ def main():
     except OSError:
         print("\n".join(text_fallback(agents, term_w, gutter)))
         return 0
-    print("\n".join(placeholders(img_id, cols, gutter)))
+    print("\n".join(placeholders(img_id, cols, rows, gutter)))
     return 0
 
 
