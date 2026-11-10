@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Claude Code status line, in a single line:
 #   <session name> [✦ <model>] · ☁ <profile> · ⎇ <branch> ⇡a ⇣b +ins/-rem ⚑n  #<pr> <ci>
-#     · ⎈ <cluster> ⚠ PROD · 🧠 <bar> <ctx%> · ⏳ 5h <bar> ↻hh:mm · 📅 7d <bar> · ⏱ <duration>
+#     · 🧠 <bar> <ctx%> · ⏳ 5h <bar> ↻hh:mm · 📅 7d <bar> · ⏱ <duration>
 # The PRs are the ones opened in this session and not merged yet; each one is a link.
 # The session name comes from /rename, --name or the automatic title, and opens the line.
 # Below the line, while a sub-agent runs: the agent map panel.
@@ -10,8 +10,8 @@
 # until the line fits (STATUSLINE_COLS forces a width, useful for testing).
 input=$(cat)
 
-# Local settings (colors per profile, k8s context prefix). Never versioned:
-#   PROFILE_COLORS="acme=orange other=ice"   KCTX_STRIP_PREFIX="acme-ctx-"
+# Local settings (colors per profile). Never versioned:
+#   PROFILE_COLORS="acme=orange other=ice"
 CONFDIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 [ -r "$CONFDIR/statusline.conf" ] && . "$CONFDIR/statusline.conf"
 
@@ -118,12 +118,6 @@ for pair in ${PROFILE_COLORS:-}; do
   esac
 done
 
-# --- cluster (kubectl; ⎈ = Kubernetes/Helm symbol, same as kube-ps1) -----------------------
-kubeconfig="${KUBECONFIG%%:*}"; kubeconfig="${kubeconfig:-$HOME/.kube/config}"
-kctx=$(awk '/^current-context:/ { print $2; exit }' "$kubeconfig" 2>/dev/null | tr -d '"')
-kctx="${kctx##*_}"             # gke_<project>_<region>_<cluster> -> <cluster>
-[ -n "${KCTX_STRIP_PREFIX:-}" ] && kctx="${kctx#$KCTX_STRIP_PREFIX}"
-
 # --- git: branch, sync with remote, local changes, stash -------------------------------------
 git_() { git -C "$dir" --no-optional-locks "$@" 2>/dev/null; }
 branch=$(git_ branch --show-current)
@@ -155,32 +149,24 @@ if [ -n "$session_id" ] && [ -f "$transcript" ]; then
                  | grep -oE 'https://github\.com/[^/" ]+/[^/" ]+/pull/[0-9]+'
              done | awk '!seen[$0]++' | tail -n 15)
       for u in $urls; do
-        # required checks from the base branch rules: the ones that have not reported yet ("Expected")
-        # do not show in the PR rollup, so they count as pending
-        repo=$(sed -E 's#https://github.com/([^/]+/[^/]+)/pull/.*#\1#' <<<"$u")
-        pr=$(gh pr view "$u" --json number,title,url,state,isDraft,baseRefName,mergeStateStatus,statusCheckRollup 2>/dev/null) || continue
-        base=$(jq -r .baseRefName <<<"$pr")
-        required=$(gh api "repos/$repo/rules/branches/$base" --jq '[.[] | select(.type == "required_status_checks")
-                     | .parameters.required_status_checks[].context]' 2>/dev/null || echo '[]')
-        jq -r --argjson req "${required:-[]}" '
-          [.statusCheckRollup[]? | {name: (.name // .context), r: (.conclusion // .state // "")}] as $c
-          | ($req - [$c[].name]) as $missing
-          | ([$c[].r] + [$missing[] | "EXPECTED"]) as $all
-          | [.number, .state, .isDraft,
-             # green = all reported checks succeeded (and the required ones, if any, present);
-             # does not depend on "cleared to merge": main may not require checks
+        gh pr view "$u" --json number,state,url,statusCheckRollup --jq '
+          [.statusCheckRollup[]? | (.conclusion // .state // "")] as $all
+          | [.number, .state,
+             # green as soon as every check that reported has succeeded; a PR with no checks
+             # at all stays neutral, and anything still running keeps it yellow
              (if any($all[]; . == "FAILURE" or . == "ERROR" or . == "CANCELLED" or . == "TIMED_OUT") then "fail"
               elif ($all | length) == 0 then "none"
-              elif any($all[]; . == "PENDING" or . == "IN_PROGRESS" or . == "QUEUED" or . == "EXPECTED" or . == "") then "pending"
+              elif any($all[]; . == "PENDING" or . == "IN_PROGRESS" or . == "QUEUED" or . == "") then "pending"
               else "ok" end),
-             .url] | @tsv' <<<"$pr"
+             .url] | @tsv' 2>/dev/null
       done > "$prs_cache.tmp"
       mv -f "$prs_cache.tmp" "$prs_cache"
     ) >/dev/null 2>&1 &
   fi
-  while IFS=$'\t' read -r n state draft ci url; do
+  while IFS=$'\t' read -r n state ci url; do
     [ -n "$n" ] || continue
-    case "$state" in MERGED|CLOSED) continue ;; esac   # open PRs only
+    case "$url" in https://*) ;; *) continue ;; esac    # line from an older cache format
+    case "$state" in MERGED|CLOSED) continue ;; esac    # open PRs only
     [ "${#pr_chips[@]}" -ge 4 ] && break
     case "$ci" in
       ok)      c=$GREEN;  icon="✓" ;;
@@ -188,7 +174,6 @@ if [ -n "$session_id" ] && [ -f "$transcript" ]; then
       pending) c=$YELLOW; icon="⏳" ;;
       *)       c=$DIM;    icon="○" ;;
     esac
-    [ "$draft" = "true" ] && c=$DIM
     pr_chips+=("${c}${B}$(link "$url" "#${n}") ${icon}${R}")
   done < "$prs_cache" 2>/dev/null
 fi
@@ -209,51 +194,45 @@ else dur_txt="$((dur_s / 60))m"; fi
 
 # ===== the line ===============================================================================
 # line <level>: the higher the level, the leaner
-#   1 no stash · 2 no ctx tokens · 3 no 5h reset · 4 no +/- · 5 only 2 PRs · 6 "⚠" without "PROD"
-#   7 shortened branch · 8 no session name · 9 no PRs · 10 no profile · 11 no 7d · 12 no duration
-#   13 no cluster · 14 5h/7d without bars · 15 ctx without bar
+#   1 no stash · 2 no ctx tokens · 3 no 5h reset · 4 no +/- · 5 only 2 PRs · 6 shortened branch
+#   7 no session name · 8 no PRs · 9 no profile · 10 no 7d · 11 no duration
+#   12 5h/7d without bars · 13 ctx without bar
 line() {
   local l=$1 out="" br=$branch n i
-  [ -n "$session_name" ] && [ "$l" -lt 8 ] && out+="${PINK}${B}${session_name}${R}${SEP}"
+  [ -n "$session_name" ] && [ "$l" -lt 7 ] && out+="${PINK}${B}${session_name}${R}${SEP}"
   # shellcheck disable=SC2086
   out+="$(fg $mc)▐$(bg $mc)$(fg 30 30 46)${B}✦ ${model}${R}$(fg $mc)▌${R}"
-  [ "$l" -lt 10 ] && out+="${SEP}${prof_c}${B}☁ ${gprofile:-?}${R}"
+  [ "$l" -lt 9 ] && out+="${SEP}${prof_c}${B}☁ ${gprofile:-?}${R}"
   if [ -n "$branch" ]; then
-    [ "$l" -ge 7 ] && [ "${#br}" -gt 18 ] && br="${br:0:17}…"
+    [ "$l" -ge 6 ] && [ "${#br}" -gt 18 ] && br="${br:0:17}…"
     out+="${SEP}${MAUVE}⎇ ${br}${R}"
     [ "${ahead:-0}" -gt 0 ] && out+=" ${SKY}⇡${ahead}${R}"     # commits to push
     [ "${behind:-0}" -gt 0 ] && out+=" ${PEACH}⇣${behind}${R}"  # commits to pull
     [ "$l" -lt 4 ] && out+=" ${GREEN}+${ins:-0}${R}${DIM}/${R}${RED}-${del:-0}${R}"
     [ "$l" -lt 1 ] && [ "${stashes:-0}" -gt 0 ] && out+=" ${YELLOW}⚑ ${stashes}${R}"
   fi
-  if [ "$l" -lt 9 ] && [ "${#pr_chips[@]}" -gt 0 ]; then   # the session's open PRs, as links
+  if [ "$l" -lt 8 ] && [ "${#pr_chips[@]}" -gt 0 ]; then   # the session's open PRs, as links
     n=${#pr_chips[@]}; [ "$l" -ge 5 ] && [ "$n" -gt 2 ] && n=2
     out+="${SEP}"
     for ((i = 0; i < n; i++)); do [ "$i" -gt 0 ] && out+=" "; out+="${pr_chips[i]}"; done
     [ "$n" -lt "${#pr_chips[@]}" ] && out+=" ${DIM}+$(( ${#pr_chips[@]} - n ))${R}"
   fi
-  if [ "$l" -lt 13 ]; then
-    if [ -z "$kctx" ]; then out+="${SEP}${DIM}⎈ no context${R}"
-    elif [[ $kctx == *prod* ]]; then
-      if [ "$l" -lt 6 ]; then out+="${SEP}${RED}${B}⎈ ${kctx} ⚠ PROD${R}"; else out+="${SEP}${RED}${B}⎈ ${kctx} ⚠${R}"; fi
-    else out+="${SEP}${TEAL}⎈ ${kctx}${R}"; fi
-  fi
   if [ -n "$pct" ]; then
-    out+="${SEP}🧠 "; [ "$l" -lt 15 ] && out+="$(bar "$pct") "
+    out+="${SEP}🧠 "; [ "$l" -lt 13 ] && out+="$(bar "$pct") "
     out+="$(pct_color "$pct")${B}${pct}%${R}"; [ "$l" -lt 2 ] && out+=" ${DIM}$(fmt_k "$ctx")${R}"
   else
     out+="${SEP}🧠 ${DIM}$(fmt_k "$ctx")${R}"
   fi
   if [ -n "$rl5_pct" ]; then
-    out+="${SEP}⏳ ${LAV}5h${R} "; [ "$l" -lt 14 ] && out+="$(bar "$rl5_pct" 6) "
+    out+="${SEP}⏳ ${LAV}5h${R} "; [ "$l" -lt 12 ] && out+="$(bar "$rl5_pct" 6) "
     out+="$(pct_color "$rl5_pct")${B}${rl5_pct}%${R}"
     [ "$l" -lt 3 ] && [ -n "$rl5_at" ] && out+=" ${DIM}↻${rl5_at}${R}"
   fi
-  if [ "$l" -lt 11 ] && [ -n "$rl7_pct" ]; then
-    out+="${SEP}📅 ${LAV}7d${R} "; [ "$l" -lt 14 ] && out+="$(bar "$rl7_pct" 6) "
+  if [ "$l" -lt 10 ] && [ -n "$rl7_pct" ]; then
+    out+="${SEP}📅 ${LAV}7d${R} "; [ "$l" -lt 12 ] && out+="$(bar "$rl7_pct" 6) "
     out+="$(pct_color "$rl7_pct")${B}${rl7_pct}%${R}"
   fi
-  [ "$l" -lt 12 ] && out+="${SEP}⏱ ${LAV}${dur_txt}${R}"
+  [ "$l" -lt 11 ] && out+="${SEP}⏱ ${LAV}${dur_txt}${R}"
   printf '%s' "$out"
 }
 
@@ -267,7 +246,7 @@ fit() {
   printf '%s' "$out"
 }
 
-status=$(fit line 15)
+status=$(fit line 13)
 
 # --- agent map: panel of active sub-agents (image in the terminal, text elsewhere) --------
 # The hook runs without a controlling terminal, so it walks up the process tree until it finds

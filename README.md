@@ -2,7 +2,7 @@
 
 A single-line status line for Claude Code, with a map of the active sub-agents drawn as an image inside the terminal.
 
-![The status line: model, profile, branch, session PRs, cluster, context, limits and duration](docs/statusline.png)
+![The status line: model, profile, branch, session PRs, context, limits and duration](docs/statusline.png)
 
 ## Install
 
@@ -23,8 +23,7 @@ One line, in this order:
 | `✦ Opus 5` | the model, in a badge colored by family |
 | `☁ profile` | the active cloud profile (gcloud), colored by prefix |
 | `⎇ main ⇡7 ⇣1 +7/-1 ⚑ 1` | branch, commits to push and to pull, lines changed, stashes |
-| `#482 ✓ #483 ⏳` | the PRs opened in this session that are still open: one link each, with its CI state |
-| `⎈ core-prod ⚠ PROD` | the kubectl context — red, and with a warning, on production |
+| `#482 ✓ #483 ⏳` | the PRs opened in this session that are still open: one link each, green as soon as every check passes |
 | `🧠 33% 66k` | the context window in use |
 | `⏳ 5h 46% ↻13:00` | the 5-hour limit and when it resets |
 | `📅 7d 61%` | the 7-day limit |
@@ -55,7 +54,6 @@ Needs Ghostty, kitty or WezTerm, and Pillow. Without them the rest of the status
 Copy `statusline.conf.example` to `~/.claude/statusline.conf`:
 
 - `PROFILE_COLORS` — color of the cloud profile, by prefix
-- `KCTX_STRIP_PREFIX` — prefix to strip from the kubectl context name
 - `AGENT_MAP` — `off` turns the agent map off entirely
 
 Agent map variables: `AGENT_MAP_BG`, `AGENT_MAP_ROWS`, `AGENT_MAP_MAX_AGE`, `AGENT_MAP_FONT`.
