@@ -7,8 +7,9 @@ With --inline the whole tree is drawn inside a single text row, to sit in the st
 itself; without it, it is the taller panel that goes below the line.
 The image goes straight to the tty (Claude's TUI filters the sequence on stdout);
 stdout only gets the kitty protocol Unicode placeholders, which are plain text. Without a
-compatible terminal it falls back to a text drawing (one dot per agent, inline).
-With no active agent, prints nothing.
+compatible terminal it falls back to text: one dot per agent inline, cards in the panel.
+With no active agent it prints nothing — unless ~/.claude/.agent-map-demo exists, which
+draws a sample tree, to try the whole path out with nothing running.
 """
 import hashlib
 import json
@@ -17,7 +18,7 @@ import sys
 import time
 
 MAX_AGE = int(os.environ.get("AGENT_MAP_MAX_AGE", "60"))   # sec. since the last write
-STALE = 1800         # an unfinished agent older than this is treated as abandoned
+STALE = 1800         # nothing written for this long: the agent is gone, finished or not
 ROWS = int(os.environ.get("AGENT_MAP_ROWS", "4"))
 MAX_ROWS = 8         # the panel grows vertically only up to this
 BOX_W = 40           # box size, in logical px
@@ -27,14 +28,6 @@ SLEAVES = 4              # the inline map stacks at most this many boxes
 CELL_W, CELL_H, DPR = 10, 20, 2
 CACHE = os.path.join(os.environ.get("CLAUDE_CONFIG_DIR")
                      or os.path.expanduser("~/.claude"), "cache", "agent-map")
-_H = os.path.expanduser("~")
-FONTS = [os.environ["AGENT_MAP_FONT"]] if os.environ.get("AGENT_MAP_FONT") else []
-FONTS += [f"{_H}/Library/Fonts/FiraCodeNerdFontMono-{{}}.ttf",
-          f"{_H}/Library/Fonts/FiraCode-{{}}.ttf",
-          "/usr/share/fonts/truetype/firacode/FiraCode-{}.ttf",
-          "/System/Library/Fonts/Menlo.ttc",
-          "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf"]
-
 BASE, SURF0, SURF1, OVER0 = (36, 39, 58), (49, 53, 72), (78, 82, 106), (110, 115, 141)
 TEXT, SUB0, PANEL = (202, 211, 245), (165, 173, 203), (30, 32, 48)
 GREEN, MAUVE, YELLOW = (166, 218, 149), (198, 160, 246), (238, 212, 159)
@@ -232,18 +225,6 @@ def state_key(agents, cols):
     return h.hexdigest()[:16]
 
 
-def font(size, bold=False):
-    from PIL import ImageFont
-    for pat in FONTS:
-        p = pat.format("Bold" if bold else "Medium")
-        if os.path.exists(p):
-            try:
-                return ImageFont.truetype(p, size, index=1 if p.endswith(".ttc") and bold else 0)
-            except OSError:
-                continue
-    return ImageFont.load_default()
-
-
 def tree(agents):
     """-> (filhos, raizes, profundidade, faixa de cada no, total de faixas)"""
     kids = {i: [] for i in range(len(agents))}
@@ -418,7 +399,7 @@ def placeholders(img_id, cols, rows, gutter):
 
 
 def text_fallback(agents, cols, gutter):
-    """Image-less fallback: one card per agent (up to 3), otherwise one line per agent."""
+    """Image-less fallback: one card per agent (up to 3), otherwise one line each, up to six."""
     G, S, T, D = "\033[38;2;88;91;112m", "\033[38;2;78;82;106m", "\033[0m", "\033[38;2;165;173;203m"
     GR, R = "\033[38;2;166;218;149m", "\033[0m"
     out = []
