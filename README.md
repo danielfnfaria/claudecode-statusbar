@@ -77,3 +77,7 @@ Agent map variables, from the environment:
 ## Dependencies
 
 `bash`, `jq`. Optional: `python3` + Pillow and a Ghostty, kitty or WezTerm terminal (the agent map drawing, in both modes; text fallback otherwise), `git` (branch), `gh` (pull requests).
+
+## License
+
+MIT — see [LICENSE](LICENSE).
