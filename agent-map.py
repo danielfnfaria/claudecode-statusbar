@@ -468,6 +468,7 @@ def main():
                       ("geral", "Locate the deployer hooks", "2m04s", "21.8k", 12, 0)]]
     if not agents:
         return 0
+    total = len(agents)        # before the cap: the number tells the truth the boxes cannot
     gutter = "\033[38;2;88;91;112m│\033[0m  "
     term_w = max(40, min(cols - 6, 160))          # usable terminal width (text fallback)
     if inline:
@@ -478,10 +479,16 @@ def main():
         agents, extra = cap_agents(agents)
         cols, rows = panel_size(agents)
         cols = max(10, min(cols, term_w))                  # image panel width
+    def emit(chunk):
+        """Inline: the map row and, on a second line, how many agents are running."""
+        print(chunk)
+        if inline:
+            print(total)
+        return 0
+
     grafico = tty not in ("", "-") and os.path.exists(f"/dev/{tty}") and os.access(f"/dev/{tty}", os.W_OK)
     if not grafico:
-        print(inline_fallback(agents) if inline else "\n".join(text_fallback(agents, term_w, gutter)))
-        return 0
+        return emit(inline_fallback(agents) if inline else "\n".join(text_fallback(agents, term_w, gutter)))
 
     img_id = int(hashlib.sha1(session_id.encode()).hexdigest()[:6], 16) or 1
     key = state_key(agents, f"{'i' if inline else 'p'}{cols}x{rows}")
@@ -505,8 +512,7 @@ def main():
             img = render_inline(agents, cols) if inline else render(agents, cols, rows)
             esc = kitty_escape(img, img_id, cols, rows)
         except Exception:
-            print(inline_fallback(agents) if inline else "\n".join(text_fallback(agents, term_w, gutter)))
-            return 0
+            return emit(inline_fallback(agents) if inline else "\n".join(text_fallback(agents, term_w, gutter)))
         # escrita atômica: outra invocação (refresh de 5s) pode estar lendo o arquivo,
         # e meia sequência kitty deixa o terminal com a imagem antiga.
         tmp_esc = f"{esc_path}.{os.getpid()}"
@@ -523,10 +529,8 @@ def main():
         with open(f"/dev/{tty}", "w") as fh, open(esc_path) as src:
             fh.write(src.read())
     except OSError:
-        print(inline_fallback(agents) if inline else "\n".join(text_fallback(agents, term_w, gutter)))
-        return 0
-    print("\n".join(placeholders(img_id, cols, rows, gutter)))
-    return 0
+        return emit(inline_fallback(agents) if inline else "\n".join(text_fallback(agents, term_w, gutter)))
+    return emit("\n".join(placeholders(img_id, cols, rows, gutter)))
 
 
 if __name__ == "__main__":

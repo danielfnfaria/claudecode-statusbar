@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Claude Code status line, in a single line:
 #   <session name> [✦ <model>] · ☁ <profile> · ⎇ <branch> ⇡a ⇣b +ins/-rem ⚑n  #<pr> <ci>
-#     · <agent map> · 🧠 <bar> <ctx%> <tokens> · ⏳ 5h <bar> ↻hh:mm · 📅 7d <bar> · ⏱ <duration>
+#     · <agent map> @n · 🧠 <bar> <ctx%> <tokens> · ⏳ 5h <bar> ↻hh:mm · 📅 7d <bar> · ⏱ <duration>
 # The PRs are the ones opened in this session and not merged yet; each one is a link.
 # The session name comes from /rename, --name or the automatic title, and opens the line.
 # The agent map is the tree of active sub-agents: one row inside the line (AGENT_MAP=inline,
@@ -219,7 +219,10 @@ line() {
     for ((i = 0; i < n; i++)); do [ "$i" -gt 0 ] && out+=" "; out+="${pr_chips[i]}"; done
     [ "$n" -lt "${#pr_chips[@]}" ] && out+=" ${DIM}+$(( ${#pr_chips[@]} - n ))${R}"
   fi
-  [ "$l" -lt 11 ] && [ -n "$map_inline" ] && out+="${SEP}${map_inline}${R}"   # the agent map, in one row
+  if [ "$l" -lt 11 ] && [ -n "$map_inline" ]; then      # the agent map, in one row, and how many
+    out+="${SEP}${map_inline}${R}"
+    [ -n "$agent_n" ] && out+=" ${GREEN}${B}@${agent_n}${R}"
+  fi
   if [ -n "$pct" ]; then
     out+="${SEP}🧠 "; [ "$l" -lt 13 ] && out+="$(bar "$pct") "
     out+="$(pct_color "$pct")${B}${pct}%${R}"; [ "$l" -lt 2 ] && out+=" ${DIM}$(fmt_k "$ctx")${R}"
@@ -253,7 +256,7 @@ fit() {
 # AGENT_MAP (statusline.conf): inline = one row inside the line · on = panel below · off = nothing.
 # The hook runs without a controlling terminal, so it walks up the process tree until it finds
 # Claude's tty: the image is transmitted through it (the TUI filters the sequence on stdout).
-map_lines=(); map_inline=""
+map_lines=(); map_inline=""; agent_n=""
 case "${AGENT_MAP:-inline}" in
   off | 0 | no | false) agent_map=off ;;
   inline | mini)        agent_map=inline ;;
@@ -266,12 +269,15 @@ if [ "$agent_map" != off ] && [ -n "$session_id" ] && [ -d "$subdir" ]; then
     [ -z "$ampid" ] && break
     case "$amt" in tty*) amtty=$amt; break ;; esac
   done
-  [ "$agent_map" = inline ] && inline_flag=--inline || inline_flag=
-  while IFS= read -r ml; do
-    [ -n "$ml" ] || continue
-    if [ "$agent_map" = inline ]; then map_inline=$ml; else map_lines+=("$ml"); fi
-  done < <(python3 "$CONFDIR/agent-map.py" "$subdir" "${amtty:--}" "$cols" "$session_id" \
-             ${inline_flag:+"$inline_flag"} 2>/dev/null)
+  if [ "$agent_map" = inline ]; then
+    # two lines: the map row, then how many sub-agents are running
+    { IFS= read -r map_inline; IFS= read -r agent_n; } < <(python3 "$CONFDIR/agent-map.py" \
+        "$subdir" "${amtty:--}" "$cols" "$session_id" --inline 2>/dev/null)
+  else
+    while IFS= read -r ml; do
+      [ -n "$ml" ] && map_lines+=("$ml")
+    done < <(python3 "$CONFDIR/agent-map.py" "$subdir" "${amtty:--}" "$cols" "$session_id" 2>/dev/null)
+  fi
 fi
 
 status=$(fit line 13)
