@@ -2,7 +2,7 @@
 
 A single-line status line for Claude Code, with a map of the active sub-agents drawn as an image inside the terminal.
 
-![The status line: model, profile, branch, session PRs, context, limits and duration](docs/statusline.png)
+![The status line while sub-agents are spawned, nested and finished](docs/statusline.gif)
 
 ## Install
 
@@ -15,6 +15,8 @@ Uninstall: `... | sh -s -- --uninstall`
 The installer checks its dependencies, validates both scripts before replacing anything, keeps a timestamped backup of every file it touches, and leaves an existing `statusLine` command alone when it already points at the script.
 
 ## What it shows
+
+![The status line, item by item](docs/statusline.png)
 
 One line, in this order:
 
@@ -38,8 +40,6 @@ most important — the stash goes first, the model and the context window are th
 ## Agent map
 
 While a sub-agent is running, a compact flow chart appears below the line: the root is the session and each small box is one agent, colored by state. With no active agent it takes up no lines at all.
-
-![The status line with the agent map panel below it](docs/agent-map.png)
 
 ![The map up close: the session, two agents under it, and one nested deeper](docs/agent-map-detail.png)
 
