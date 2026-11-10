@@ -1,6 +1,8 @@
 # claudecode-statusbar
 
-A two-line status line for Claude Code, with a map of the active sub-agents drawn as an image inside the terminal.
+A single-line status line for Claude Code, with a map of the active sub-agents drawn as an image inside the terminal.
+
+![The status line: model, profile, branch, session PRs, cluster, context, limits and duration](docs/statusline.png)
 
 ## Install
 
@@ -14,15 +16,35 @@ The installer checks its dependencies, validates both scripts before replacing a
 
 ## What it shows
 
-**Line 1 — work**: active cloud profile, running agents, kubectl context (red warning on production), branch with ahead/behind, local changes and stashes, and the session's PR with its CI state.
+One line, in this order:
 
-**Line 2 — session**: model, effort, context, cost, 5-hour and 7-day limits, cache and duration — all as gradient bars.
+| item | what it is |
+| --- | --- |
+| `✦ Opus 5` | the model, in a badge colored by family |
+| `☁ profile` | the active cloud profile (gcloud), colored by prefix |
+| `⎇ main ⇡7 ⇣1 +7/-1 ⚑ 1` | branch, commits to push and to pull, lines changed, stashes |
+| `#482 ✓ #483 ⏳` | the PRs opened in this session that are still open: one link each, with its CI state |
+| `⎈ core-prod ⚠ PROD` | the kubectl context — red, and with a warning, on production |
+| `🧠 33% 66k` | the context window in use |
+| `⏳ 5h 46% ↻13:00` | the 5-hour limit and when it resets |
+| `📅 7d 61%` | the 7-day limit |
+| `⏱ 1h22m` | how long the session has been running |
 
-Both lines adapt to the terminal width: as it narrows, items are dropped from the least to the most important.
+Context and limits come as bars with a green → yellow → red gradient, filled to an eighth of a
+character. A session name (`/rename`, `--name` or the automatic title) opens the line.
+
+The line adapts to the terminal width: as it narrows, items are dropped from the least to the
+most important — the stash goes first, the model and the context window are the last to go.
 
 ## Agent map
 
-While a sub-agent is running, a compact flow chart appears: the root is the session and each small box is one agent, colored by state. With no active agent it takes up no lines at all.
+While a sub-agent is running, a compact flow chart appears below the line: the root is the session and each small box is one agent, colored by state. With no active agent it takes up no lines at all.
+
+![The status line with the agent map panel below it](docs/agent-map.png)
+
+![The map up close: the session, two agents under it, and one nested deeper](docs/agent-map-detail.png)
+
+A green outline is an agent working right now; a gray one is waiting for the agents it spawned.
 
 It works the way it does because the Claude Code TUI strips escape sequences from the status line output. So the image is transmitted straight to the tty using the kitty graphics protocol, and the status line itself prints only Unicode placeholders, which are ordinary text. On a terminal without that support it falls back to a text drawing.
 
@@ -34,6 +56,7 @@ Copy `statusline.conf.example` to `~/.claude/statusline.conf`:
 
 - `PROFILE_COLORS` — color of the cloud profile, by prefix
 - `KCTX_STRIP_PREFIX` — prefix to strip from the kubectl context name
+- `AGENT_MAP` — `off` turns the agent map off entirely
 
 Agent map variables: `AGENT_MAP_BG`, `AGENT_MAP_ROWS`, `AGENT_MAP_MAX_AGE`, `AGENT_MAP_FONT`.
 

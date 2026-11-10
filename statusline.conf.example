@@ -8,3 +8,7 @@ PROFILE_COLORS="acme=orange outracorp=ice"
 # Prefix to strip from the kubectl context name (⎈), when it repeats the company.
 # E.g.: context "acme-ctx-core-prod" is shown as "core-prod".
 KCTX_STRIP_PREFIX="acme-ctx-"
+
+# Agent map (the panel of active sub-agents). AGENT_MAP=off turns it off entirely:
+# no python runs and no image is sent to the terminal.
+AGENT_MAP=on
