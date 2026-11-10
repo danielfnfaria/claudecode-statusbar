@@ -5,6 +5,8 @@
 # Colors: orange ice blue green mauve pink teal peach sky yellow red
 PROFILE_COLORS="acme=orange outracorp=ice"
 
-# Agent map (the panel of active sub-agents). AGENT_MAP=off turns it off entirely:
-# no python runs and no image is sent to the terminal.
-AGENT_MAP=on
+# Agent map, the tree of active sub-agents:
+#   inline  one row inside the status line itself (the default)
+#   on      a panel below the line, with more room for the tree
+#   off     nothing at all: no python runs and no image is sent to the terminal
+AGENT_MAP=inline

@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
-"""Status line agent map: list of ACTIVE sub-agents + flowchart, as an image.
+"""Status line agent map: the tree of ACTIVE sub-agents, as an image.
 
-Usage: agent-map.py <subagents dir> <tty|-> <terminal columns> <session_id>
+Usage: agent-map.py <subagents dir> <tty|-> <terminal columns> <session_id> [--inline]
 
+With --inline the whole tree is drawn inside a single text row, to sit in the status line
+itself; without it, it is the taller panel that goes below the line.
 The image goes straight to the tty (Claude's TUI filters the sequence on stdout);
-stdout only gets the kitty protocol Unicode placeholders, which are plain text.
-Without a compatible terminal, falls back to a text drawing. With no active agent, prints nothing.
+stdout only gets the kitty protocol Unicode placeholders, which are plain text. Without a
+compatible terminal it falls back to a text drawing (one dot per agent, inline).
+With no active agent, prints nothing.
 """
 import hashlib
 import json
@@ -19,6 +22,8 @@ ROWS = int(os.environ.get("AGENT_MAP_ROWS", "4"))
 MAX_ROWS = 8         # the panel grows vertically only up to this
 BOX_W = 40           # box size, in logical px
 BOX_H, BOX_GAP = 9, 3
+SBOX_W, SBOX_H = 13, 7   # mini box of the inline map (one text row)
+SLEAVES = 4              # the inline map stacks at most this many boxes
 CELL_W, CELL_H, DPR = 10, 20, 2
 CACHE = os.path.join(os.environ.get("CLAUDE_CONFIG_DIR")
                      or os.path.expanduser("~/.claude"), "cache", "agent-map")
@@ -330,6 +335,68 @@ def render(agents, cols, rows):
     return img
 
 
+def inline_size(agents):
+    """Cells the one-row map needs: only the tree depth matters, the height is fixed."""
+    _, _, depth, _, _ = tree(agents)
+    maxd = (max(depth.values()) + 1) if depth else 1
+    w_px = (4 + 9 + maxd * (SBOX_W + 5)) * DPR
+    return max(3, -(-int(w_px) // (CELL_W * DPR)))
+
+
+def render_inline(agents, cols):
+    """The whole map inside a single text row: the session, then the agents it spawned."""
+    from PIL import Image, ImageDraw
+    W, H = cols * CELL_W * DPR, CELL_H * DPR
+    img = Image.new("RGB", (W, H), term_bg())
+    d = ImageDraw.Draw(img)
+    kids, roots, depth, slot, leaves = tree(agents)
+
+    x0, ry, pad = 2 * DPR, H / 2, 3 * DPR
+    d.rounded_rectangle([x0, ry - 4 * DPR, x0 + 5 * DPR, ry + 4 * DPR], radius=2 * DPR,
+                        fill=SURF0, outline=OVER0, width=DPR)
+    bw, gap = SBOX_W * DPR, 2 * DPR
+    bh = max(3 * DPR, min(SBOX_H * DPR, (H - 2 * pad - (leaves - 1) * gap) / leaves))
+    ytop = ry - (leaves * (bh + gap) - gap) / 2
+
+    def box_x(i):
+        return x0 + 9 * DPR + depth[i] * (bw + 5 * DPR)
+
+    def box_y(i):
+        return ytop + slot[i] * (bh + gap)
+
+    for i, a in enumerate(agents):
+        x, y = box_x(i), box_y(i)
+        if i in roots:
+            px, py = x0 + 5 * DPR, ry
+        else:
+            p = a["parent"]
+            px, py = box_x(p) + bw, box_y(p) + bh / 2
+        bend = px + 2 * DPR
+        d.line([(px, py), (bend, py), (bend, y + bh / 2), (x, y + bh / 2)], fill=SURF1, width=DPR)
+        d.rounded_rectangle([x, y, x + bw, y + bh], radius=1.5 * DPR, fill=SURF0,
+                            outline=a["dot"], width=DPR)
+        d.rectangle([x + 2 * DPR, y + bh / 2 - DPR, x + 5 * DPR, y + bh / 2 + DPR], fill=a["dot"])
+    return img
+
+
+def cap_inline(agents):
+    """Keeps the boxes readable: at most SLEAVES of them, the most recent first."""
+    kept = agents[:SLEAVES]
+    for a in kept:
+        if a.get("parent", -1) >= len(kept):
+            a["parent"] = -1
+    return kept
+
+
+def inline_fallback(agents):
+    """Image-less fallback: one dot per agent, colored by state."""
+    out = ""
+    for a in agents:
+        r, g, b = a["dot"]
+        out += f"\033[38;2;{r};{g};{b}m\u25cf"
+    return out + "\033[0m"
+
+
 def kitty_escape(img, img_id, cols, rows):
     import base64
     import io
@@ -385,9 +452,11 @@ def text_fallback(agents, cols, gutter):
 
 
 def main():
-    if len(sys.argv) < 5:
+    argv = [a for a in sys.argv[1:] if a != "--inline"]
+    inline = "--inline" in sys.argv        # the map inside the status line, in one text row
+    if len(argv) < 4:
         return 0
-    subdir, tty, cols, session_id = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
+    subdir, tty, cols, session_id = argv[0], argv[1], int(argv[2]), argv[3]
     agents = read_agents(subdir)
     if not agents and os.path.exists(os.path.expanduser("~/.claude/.agent-map-demo")):
         # demo mode: exercises the whole path (image + placeholders) with no agent running
@@ -401,16 +470,21 @@ def main():
         return 0
     gutter = "\033[38;2;88;91;112m│\033[0m  "
     term_w = max(40, min(cols - 6, 160))          # usable terminal width (text fallback)
-    agents, extra = cap_agents(agents)
-    cols, rows = panel_size(agents)
-    cols = max(10, min(cols, term_w))                      # image panel width
+    if inline:
+        agents = cap_inline(agents)
+        cols, rows = inline_size(agents), 1
+        gutter = ""
+    else:
+        agents, extra = cap_agents(agents)
+        cols, rows = panel_size(agents)
+        cols = max(10, min(cols, term_w))                  # image panel width
     grafico = tty not in ("", "-") and os.path.exists(f"/dev/{tty}") and os.access(f"/dev/{tty}", os.W_OK)
     if not grafico:
-        print("\n".join(text_fallback(agents, term_w, gutter)))
+        print(inline_fallback(agents) if inline else "\n".join(text_fallback(agents, term_w, gutter)))
         return 0
 
     img_id = int(hashlib.sha1(session_id.encode()).hexdigest()[:6], 16) or 1
-    key = state_key(agents, f"{cols}x{rows}")
+    key = state_key(agents, f"{'i' if inline else 'p'}{cols}x{rows}")
     os.makedirs(CACHE, exist_ok=True)
     esc_path = os.path.join(CACHE, f"{session_id}.esc")
     key_path = os.path.join(CACHE, f"{session_id}.key")
@@ -428,9 +502,10 @@ def main():
         pass
     if old != key or stale or not os.path.exists(esc_path):
         try:
-            esc = kitty_escape(render(agents, cols, rows), img_id, cols, rows)
+            img = render_inline(agents, cols) if inline else render(agents, cols, rows)
+            esc = kitty_escape(img, img_id, cols, rows)
         except Exception:
-            print("\n".join(text_fallback(agents, term_w, gutter)))
+            print(inline_fallback(agents) if inline else "\n".join(text_fallback(agents, term_w, gutter)))
             return 0
         # escrita atômica: outra invocação (refresh de 5s) pode estar lendo o arquivo,
         # e meia sequência kitty deixa o terminal com a imagem antiga.
@@ -448,7 +523,7 @@ def main():
         with open(f"/dev/{tty}", "w") as fh, open(esc_path) as src:
             fh.write(src.read())
     except OSError:
-        print("\n".join(text_fallback(agents, term_w, gutter)))
+        print(inline_fallback(agents) if inline else "\n".join(text_fallback(agents, term_w, gutter)))
         return 0
     print("\n".join(placeholders(img_id, cols, rows, gutter)))
     return 0

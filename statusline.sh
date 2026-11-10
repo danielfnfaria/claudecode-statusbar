@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Claude Code status line, in a single line:
 #   <session name> [✦ <model>] · ☁ <profile> · ⎇ <branch> ⇡a ⇣b +ins/-rem ⚑n  #<pr> <ci>
-#     · 🧠 <bar> <ctx%> · ⏳ 5h <bar> ↻hh:mm · 📅 7d <bar> · ⏱ <duration>
+#     · <agent map> · 🧠 <bar> <ctx%> <tokens> · ⏳ 5h <bar> ↻hh:mm · 📅 7d <bar> · ⏱ <duration>
 # The PRs are the ones opened in this session and not merged yet; each one is a link.
 # The session name comes from /rename, --name or the automatic title, and opens the line.
-# Below the line, while a sub-agent runs: the agent map panel.
+# The agent map is the tree of active sub-agents: one row inside the line (AGENT_MAP=inline,
+# the default), a taller panel below it (on), or nothing at all (off).
 # Receives the session JSON on stdin; everything here must be fast (the PR state comes from a cache).
 # Responsive: reads the Claude Code terminal width and drops items, least to most important,
 # until the line fits (STATUSLINE_COLS forces a width, useful for testing).
@@ -94,9 +95,10 @@ cols=${STATUSLINE_COLS:-$(term_cols)}
 [ "$cols" -gt 0 ] || cols=200   # no terminal found: cut nothing
 max=$(( cols - 6 ))   # frame + padding Claude Code leaves at the edges
 
-# visible width: no colors or links; emojis take 2 columns
+# visible width: no colors or links; emojis take 2 columns and combining marks none
+# (the agent map's kitty placeholders are one cell plus one or two combining marks)
 vis() {
-  perl -CSD -0777 -ne 's/\e\[[0-9;]*m//g; s/\e\]8;;[^\e]*\e\\//g; $n = length($_);
+  perl -CSD -0777 -ne 's/\e\[[0-9;]*m//g; s/\e\]8;;[^\e]*\e\\//g; s/\p{Mn}//g; $n = length($_);
     $n++ while /[\x{1F300}-\x{1FAFF}\x{23F3}\x{26A1}]/g; print $n' <<<"$1"
 }
 
@@ -195,7 +197,7 @@ else dur_txt="$((dur_s / 60))m"; fi
 # ===== the line ===============================================================================
 # line <level>: the higher the level, the leaner
 #   1 no stash · 2 no ctx tokens · 3 no 5h reset · 4 no +/- · 5 only 2 PRs · 6 shortened branch
-#   7 no session name · 8 no PRs · 9 no profile · 10 no 7d · 11 no duration
+#   7 no session name · 8 no PRs · 9 no profile · 10 no 7d · 11 no agent map / no duration
 #   12 5h/7d without bars · 13 ctx without bar
 line() {
   local l=$1 out="" br=$branch n i
@@ -217,6 +219,7 @@ line() {
     for ((i = 0; i < n; i++)); do [ "$i" -gt 0 ] && out+=" "; out+="${pr_chips[i]}"; done
     [ "$n" -lt "${#pr_chips[@]}" ] && out+=" ${DIM}+$(( ${#pr_chips[@]} - n ))${R}"
   fi
+  [ "$l" -lt 11 ] && [ -n "$map_inline" ] && out+="${SEP}${map_inline}${R}"   # the agent map, in one row
   if [ -n "$pct" ]; then
     out+="${SEP}🧠 "; [ "$l" -lt 13 ] && out+="$(bar "$pct") "
     out+="$(pct_color "$pct")${B}${pct}%${R}"; [ "$l" -lt 2 ] && out+=" ${DIM}$(fmt_k "$ctx")${R}"
@@ -246,25 +249,32 @@ fit() {
   printf '%s' "$out"
 }
 
-status=$(fit line 13)
-
-# --- agent map: panel of active sub-agents (image in the terminal, text elsewhere) --------
+# --- agent map: the active sub-agents, as an image in the terminal (text elsewhere) --------
+# AGENT_MAP (statusline.conf): inline = one row inside the line · on = panel below · off = nothing.
 # The hook runs without a controlling terminal, so it walks up the process tree until it finds
 # Claude's tty: the image is transmitted through it (the TUI filters the sequence on stdout).
-map_lines=()
-# AGENT_MAP=off (statusline.conf) turns the panel off: no python runs and no image is sent.
-case "${AGENT_MAP:-on}" in off | 0 | no | false) agent_map=0 ;; *) agent_map=1 ;; esac
-if [ "$agent_map" = 1 ] && [ -n "$session_id" ] && [ -d "$subdir" ]; then
+map_lines=(); map_inline=""
+case "${AGENT_MAP:-inline}" in
+  off | 0 | no | false) agent_map=off ;;
+  inline | mini)        agent_map=inline ;;
+  *)                    agent_map=panel ;;
+esac
+if [ "$agent_map" != off ] && [ -n "$session_id" ] && [ -d "$subdir" ]; then
   amtty=""; ampid=$PPID
   for _ in 1 2 3 4 5 6; do
     read -r ampid amt _ <<<"$(ps -o ppid=,tty=,comm= -p "$ampid" 2>/dev/null)"
     [ -z "$ampid" ] && break
     case "$amt" in tty*) amtty=$amt; break ;; esac
   done
+  [ "$agent_map" = inline ] && inline_flag=--inline || inline_flag=
   while IFS= read -r ml; do
-    [ -n "$ml" ] && map_lines+=("$ml")
-  done < <(python3 "$CONFDIR/agent-map.py" "$subdir" "${amtty:--}" "$cols" "$session_id" 2>/dev/null)
+    [ -n "$ml" ] || continue
+    if [ "$agent_map" = inline ]; then map_inline=$ml; else map_lines+=("$ml"); fi
+  done < <(python3 "$CONFDIR/agent-map.py" "$subdir" "${amtty:--}" "$cols" "$session_id" \
+             ${inline_flag:+"$inline_flag"} 2>/dev/null)
 fi
+
+status=$(fit line 13)
 
 # Alone, the status is a bare line. With the agent panel, a frame holds the two together:
 # the panel lines are printed raw — cutting them would break the cell↔image mapping.
